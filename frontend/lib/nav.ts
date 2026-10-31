@@ -29,11 +29,11 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "STAFF", "CUSTOMER"], ready: true },
 
-  { label: "Subscriptions", href: "/subscriptions", icon: Repeat, roles: ["ADMIN", "STAFF"], ready: false },
+  { label: "Subscriptions", href: "/subscriptions", icon: Repeat, roles: ["ADMIN", "STAFF"], ready: true },
   { label: "Invoices", href: "/invoices", icon: Receipt, roles: ["ADMIN", "STAFF"], ready: false },
   { label: "Payments", href: "/payments", icon: CreditCard, roles: ["ADMIN", "STAFF"], ready: false },
-  { label: "Customers", href: "/customers", icon: Users, roles: ["ADMIN", "STAFF"], ready: false },
-  { label: "Reports", href: "/reports", icon: BarChart3, roles: ["ADMIN", "STAFF"], ready: false },
+  { label: "Customers", href: "/customers", icon: Users, roles: ["ADMIN", "STAFF"], ready: true },
+  { label: "Reports", href: "/reports", icon: BarChart3, roles: ["ADMIN", "STAFF"], ready: true },
 
   { label: "Products", href: "/products", icon: Package, roles: ["ADMIN", "STAFF"], ready: false },
   { label: "Plans", href: "/plans", icon: Layers, roles: ["ADMIN", "STAFF"], ready: false },
@@ -41,7 +41,7 @@ export const NAV: NavItem[] = [
   { label: "Discounts", href: "/discounts", icon: BadgePercent, roles: ["ADMIN"], ready: false },
   { label: "Team & users", href: "/users", icon: UserCog, roles: ["ADMIN"], ready: true },
 
-  { label: "My subscriptions", href: "/my/subscriptions", icon: Repeat, roles: ["CUSTOMER"], ready: false },
+  { label: "My subscriptions", href: "/my/subscriptions", icon: Repeat, roles: ["CUSTOMER"], ready: true },
   { label: "My invoices", href: "/my/invoices", icon: Receipt, roles: ["CUSTOMER"], ready: false },
 
   { label: "Account", href: "/account", icon: UserRound, roles: ["ADMIN", "STAFF", "CUSTOMER"], ready: true },

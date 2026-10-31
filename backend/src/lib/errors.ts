@@ -14,3 +14,6 @@ export const unauthorized = (msg = "Authentication required") => new AppError(40
 export const forbidden = (msg = "You do not have access to this resource") => new AppError(403, "FORBIDDEN", msg);
 export const notFound = (what = "Resource") => new AppError(404, "NOT_FOUND", `${what} not found`);
 export const conflict = (msg: string, details?: unknown) => new AppError(409, "CONFLICT", msg, details);
+
+/** Domain-rule violations the client can act on (stable `code`, 409 Conflict). */
+export const domainError = (code: string, msg: string, details?: unknown) => new AppError(409, code, msg, details);

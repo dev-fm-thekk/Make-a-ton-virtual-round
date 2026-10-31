@@ -3,7 +3,7 @@
 // Minimal design-system primitives. Teammates: build new screens from these so everything looks consistent.
 import clsx from "clsx";
 import { Loader2, X } from "lucide-react";
-import { useEffect, useId, useRef, type ButtonHTMLAttributes, type Ref, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type Ref, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 // ───────── Button ─────────
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -74,6 +74,28 @@ export function Select({ className, ...rest }: SelectHTMLAttributes<HTMLSelectEl
   return <select {...rest} className={clsx(control, "pr-8", className)} />;
 }
 
+export function SelectField({ label, error, hint, id, className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement> & { label: string; error?: string; hint?: ReactNode }) {
+  const auto = useId();
+  const fid = id ?? auto;
+  return (
+    <Field label={label} error={error} hint={hint} htmlFor={fid}>
+      <select id={fid} aria-invalid={!!error} {...rest} className={clsx(control, "pr-8", error && "border-danger", className)}>
+        {children}
+      </select>
+    </Field>
+  );
+}
+
+export function Textarea({ label, error, hint, id, className, ref, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; error?: string; hint?: ReactNode; ref?: Ref<HTMLTextAreaElement> }) {
+  const auto = useId();
+  const fid = id ?? auto;
+  return (
+    <Field label={label} error={error} hint={hint} htmlFor={fid}>
+      <textarea id={fid} ref={ref} aria-invalid={!!error} rows={3} className={clsx(control, "h-auto py-2", error && "border-danger", className)} {...rest} />
+    </Field>
+  );
+}
+
 // ───────── Card / Badge / Alert ─────────
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={clsx("rounded-xl border border-border bg-surface shadow-sm", className)}>{children}</div>;
@@ -104,7 +126,7 @@ export function Spinner({ className }: { className?: string }) {
 }
 
 // ───────── Modal ─────────
-export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -118,7 +140,7 @@ export function Modal({ open, onClose, title, children }: { open: boolean; onClo
       ref={ref}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-xl border border-border bg-surface p-0 text-foreground shadow-xl backdrop:bg-black/50"
+      className={clsx("m-auto w-[calc(100%-2rem)] rounded-xl border border-border bg-surface p-0 text-foreground shadow-xl backdrop:bg-black/50", wide ? "max-w-2xl" : "max-w-md")}
     >
       {open && (
         <div className="p-6">

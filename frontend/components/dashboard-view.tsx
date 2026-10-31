@@ -2,45 +2,108 @@
 
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { EmptyState, ErrorState, LoadingState } from "@/components/data/list-parts";
 import { useAuth } from "@/lib/auth";
-import { NAV } from "@/lib/nav";
-import { Badge, Card, PageHeader } from "./ui";
+import { formatDate, formatMoney, todayIso } from "@/lib/format";
+import { useSubscriptions } from "@/features/subscriptions/api";
+import { billingCycle, StatusBadge } from "@/features/subscriptions/labels";
+import { FinanceOverview } from "@/features/reports/overview";
+import { resolveRange } from "@/features/reports/range";
+import { Card, PageHeader } from "./ui";
 
-// Placeholder landing page. Package 8 (Reporting) replaces the "coming up" grid with the finance
-// dashboard: active subscriptions, revenue, outstanding, overdue invoices.
+/** Staff land on the finance picture for this month; customers on their own subscriptions. */
 export function DashboardView() {
   const { user } = useAuth();
   if (!user) return null;
+  const first = user.name.split(" ")[0];
 
-  const items = NAV.filter((n) => n.roles.includes(user.role) && n.href !== "/dashboard" && n.href !== "/account");
+  if (user.role === "CUSTOMER") {
+    return (
+      <>
+        <PageHeader title={`Welcome, ${first}`} description="Your subscriptions at a glance." />
+        <CustomerHome />
+      </>
+    );
+  }
 
   return (
     <>
       <PageHeader
-        title={`Welcome, ${user.name.split(" ")[0]}`}
-        description={user.role === "CUSTOMER" ? "Your subscriptions and invoices will appear here." : "Everything you need to run recurring billing, in one place."}
+        title={`Welcome, ${first}`}
+        description="This month at a glance."
+        actions={
+          <Link href="/reports" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+            Full reports <ArrowRight className="size-4" aria-hidden />
+          </Link>
+        }
       />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map((item) => {
-          const Icon = item.icon;
-          const inner = (
-            <Card className={`flex h-full items-center gap-4 p-5 ${item.ready ? "transition-colors hover:border-primary" : "opacity-60"}`}>
-              <span className="grid size-10 place-items-center rounded-lg bg-primary/10 text-primary">
-                <Icon className="size-5" aria-hidden />
-              </span>
-              <span className="flex-1 font-medium">{item.label}</span>
-              {item.ready ? <ArrowRight className="size-4 text-muted" aria-hidden /> : <Badge>Soon</Badge>}
-            </Card>
-          );
-          return item.ready ? (
-            <Link key={item.href} href={item.href}>
-              {inner}
-            </Link>
-          ) : (
-            <div key={item.href}>{inner}</div>
-          );
-        })}
-      </div>
+      <FinanceOverview range={resolveRange("month", {}, todayIso())} />
     </>
+  );
+}
+
+function CustomerHome() {
+  const query = useSubscriptions({ sort: "nextBillingDate", limit: 50 });
+  if (query.isPending) return <LoadingState />;
+  if (query.isError) return <Card><ErrorState onRetry={() => void query.refetch()} message="Could not load your subscriptions." /></Card>;
+
+  const live = query.data.items.filter((s) => s.status === "ACTIVE" || s.status === "PAUSED");
+  const upcoming = live.filter((s) => s.status === "ACTIVE" && s.nextBillingDate).sort((a, b) => a.nextBillingDate!.localeCompare(b.nextBillingDate!))[0];
+  const total = live.filter((s) => s.status === "ACTIVE").reduce((t, s) => t + Number(s.totals.total), 0);
+
+  if (query.data.items.length === 0) {
+    return (
+      <Card>
+        <EmptyState title="You have no subscriptions yet" hint="When we set one up for you, it will appear here." />
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card className="p-5">
+          <p className="text-sm text-muted">Active subscriptions</p>
+          <p className="mt-1 text-2xl font-semibold">{live.filter((s) => s.status === "ACTIVE").length}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-sm text-muted">Next invoice</p>
+          <p className="mt-1 text-2xl font-semibold">{upcoming ? formatDate(upcoming.nextBillingDate) : "—"}</p>
+          {upcoming && <p className="text-xs text-muted">{upcoming.number}</p>}
+        </Card>
+        <Card className="p-5">
+          <p className="text-sm text-muted">Per billing period (all active)</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">{formatMoney(total)}</p>
+          <p className="text-xs text-muted">Including tax</p>
+        </Card>
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="font-semibold">Your subscriptions</h2>
+          <Link href="/my/subscriptions" className="text-sm text-primary hover:underline">
+            View all
+          </Link>
+        </div>
+        <ul className="divide-y divide-border">
+          {query.data.items.slice(0, 5).map((s) => (
+            <li key={s.id}>
+              <Link href={`/my/subscriptions/${s.id}`} className="flex items-center justify-between gap-4 px-5 py-3 hover:bg-surface-2/60">
+                <div>
+                  <p className="font-medium">{s.plan.name}</p>
+                  <p className="text-xs text-muted">
+                    {s.number} · {billingCycle(s.plan)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <span className="tabular-nums">{formatMoney(s.totals.total)}</span>
+                  <StatusBadge status={s.status} />
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
   );
 }

@@ -10,6 +10,7 @@ import { post } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { applyApiError } from "@/lib/forms";
 import { passwordSchema } from "@/lib/password";
+import { OwnProfileForm } from "@/features/customers/customer-form";
 import { PasswordField } from "./password-field";
 import { Alert, Badge, Button, Card, PageHeader } from "./ui";
 
@@ -82,6 +83,13 @@ export function AccountView() {
           </form>
         </Card>
       </div>
+
+      {user.role === "CUSTOMER" && (
+        <Card className="mt-6 p-6">
+          <h2 className="mb-4 font-semibold">Billing details</h2>
+          <OwnProfileForm />
+        </Card>
+      )}
     </>
   );
 }

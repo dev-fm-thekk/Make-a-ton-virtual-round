@@ -22,12 +22,12 @@ Reference implementation to copy: `src/modules/users/users.routes.ts` and `src/m
 | 0 | **Foundation, Auth, Users** ✅ | User, RefreshToken, PasswordResetToken, AuditLog | `/auth/*`, `/users/*` | – | – |
 | 1 | **Catalog** | Tax, Product, ProductVariant, PaymentTerm | `/taxes`, `/products` (+ `/:id/variants`), `/payment-terms` | Admin write; Staff read | – |
 | 2 | **Plans & quotation templates** | Plan, QuotationTemplate(+Line) | `/plans`, `/quotation-templates` | Admin write; Staff read | 1 (reads Product) |
-| 3 | **Customers** | Customer | `/customers` (staff CRUD, search); `/me/profile` (customer edits own) | Staff/Admin; Customer = self | – |
-| 4 | **Subscriptions** | Subscription, SubscriptionLine, SubscriptionStatusHistory | `/subscriptions` CRUD, lines, `POST /:id/transition` (confirm/activate/pause/resume/close/renew), create-from-template; customer portal `GET` of own | Staff/Admin write; Customer read-own | 1, 2, 3 (code against the schema; use seed data) |
+| 3 | **Customers** ✅ | Customer | `/customers` (staff CRUD, search); `/me/profile` (customer edits own) | Staff/Admin; Customer = self | – |
+| 4 | **Subscriptions** ✅ | Subscription, SubscriptionLine, SubscriptionStatusHistory | `/subscriptions` CRUD, lines, `POST /:id/transition` (confirm/activate/pause/resume/close/renew), create-from-template; customer portal `GET` of own | Staff/Admin write; Customer read-own | 1, 2, 3 (code against the schema; use seed data) |
 | 5 | **Discounts** | Discount, DiscountProduct, SubscriptionDiscount | `/discounts` CRUD (admin only), attach to products / subscriptions | Admin | 1 |
 | 6 | **Billing engine & invoices** | BillingRun, Invoice, InvoiceLine, DiscountRedemption | `POST /billing/run`, `/invoices` list/get, `confirm` / `cancel` / `send` / `print` (PDF/HTML), customer portal read-own | Staff/Admin; Customer read-own | 4, 5 (calls their services) |
 | 7 | **Payments** | Payment | `POST /invoices/:id/payments` (idempotency key), `GET /payments`, `GET /invoices/:id/payments` | Staff/Admin record; Customer read-own | 6 |
-| 8 | **Reporting** | – (read-only SQL over everything) | `/reports/summary`, `/reports/revenue`, `/reports/overdue`, `/reports/subscriptions` (filters, paging) | Admin/Staff | 4, 6, 7 |
+| 8 | **Reporting** ✅ | – (read-only SQL over everything) | `/reports/summary`, `/reports/revenue`, `/reports/overdue`, `/reports/subscriptions` (filters, paging) | Admin/Staff | 4, 6, 7 |
 | F | **Frontend** (Next.js, `frontend/`) | – | consumes the API | – | contracts below |
 
 Suggested split for three people: **A** = 1 → 2 → 5, **B** = 3 → 4 → 8, **C** = 6 → 7. Frontend can start immediately on
@@ -61,3 +61,66 @@ The browser only calls `/api/v1/*` on the Next origin; `next.config.ts` proxies 
 - **Forms:** react-hook-form + zod; surface server errors with `applyApiError` (`lib/forms.ts`).
 - **UI:** build from `components/ui.tsx` (Button, Input, Select, Card, Badge, Modal, PageHeader…) and the semantic colour tokens in `globals.css` (`bg-surface`, `text-muted`…), never raw colours.
 - Next.js 16 with Cache Components: pages that call `useSearchParams` need a `<Suspense>` boundary. Read `frontend/node_modules/next/dist/docs/` before using Next APIs from memory.
+
+## Implemented: Packages 3, 4, 8
+
+Run `npm test` (unit, no DB), `npm run test:integration` (38 HTTP tests against the DB in `.env`; creates and deletes `zzt…`-tagged rows),
+and `npx tsx --env-file=.env scripts/perf-reports.ts` (seeds ~100k invoices inside a transaction that is rolled back, then times every report).
+
+### Customers (`/customers`, `/me`)
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /customers?search&hasPortalAccess&sort&page&limit` | staff | each item has `activeSubscriptions` |
+| `POST /customers` · `PATCH /customers/:id` | staff | duplicate email → 409 with `details.existingCustomerId`; `null` clears optional fields |
+| `GET /customers/:id` | staff | + `subscriptionsByStatus`, `outstandingBalance`, `overdueBalance` |
+| `DELETE /customers/:id` | admin | soft delete; 409 while subscriptions aren't CLOSED or invoices are DRAFT/CONFIRMED; also disables their login |
+| `GET/PATCH /me/profile` | customer | own profile only; internal `notes` never exposed |
+
+### Subscriptions (`/subscriptions`)
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /subscriptions?status=ACTIVE,PAUSED&customerId&planId&search&startFrom&startTo&sort` | staff all, customer own | items carry per-period `totals` |
+| `GET /subscriptions/:id` | staff, customer own (404 otherwise) | lines, totals, `history`, `availableActions` for the caller |
+| `POST /subscriptions` | staff | `{customerId, planId \| quotationTemplateId, startDate, expiryDate?, paymentTermId?, lines?}`; template copies plan + lines and sets `quoteValidUntil`; prices come from the catalog (`salesPrice + variant.extraPrice`) unless `unitPrice` is given |
+| `PATCH /subscriptions/:id` · `PUT /subscriptions/:id/lines` | staff | only in DRAFT/QUOTATION; **`version` required** (optimistic lock) |
+| `POST /subscriptions/:id/transition` `{action, version, reason?, expiryDate?}` | by action (see `state-machine.ts`) | `send_quotation, confirm, activate, pause, resume, close, renew` |
+| `POST /subscriptions/maintenance/close-expired` | admin | closes expired subs on plans with `autoCloseOnEnd` (scheduler should call `closeExpiredSubscriptions()` daily) |
+
+Stable error codes (HTTP 409 unless noted): `STALE_VERSION` (reload and retry), `INVALID_TRANSITION`, `PLAN_RULE` (plan switch forbids it), `PLAN_UNAVAILABLE`, `QUOTE_EXPIRED`, `MIN_QUANTITY`, `NO_LINES`, `NOT_EDITABLE`, `NO_EXPIRY`.
+
+**Billing contract for Package 6** (`modules/subscriptions/subscriptions.billing.ts`, use inside one `prisma.$transaction` per subscription):
+`claimDueSubscriptions(tx, asOf, limit)` → locks due ACTIVE subs (`SKIP LOCKED`) with plan, term, customer, lines+tax, discounts;
+`currentPeriod(sub)` → `{periodStart, periodEnd}`; `advanceBilling(tx, sub)` → moves `nextBillingDate` (null after expiry). Schedules are computed from the start date, so month-end subscriptions don't drift (Jan 31 → Feb 28 → Mar 31).
+
+### Reporting (`/reports`, admin + staff)
+`GET /summary`, `/revenue?groupBy=day|week|month`, `/overdue` (aging buckets + list), `/invoices?state=all|paid|outstanding|overdue`, `/payments`, `/subscriptions` (MRR by plan).
+Conventions: all days are UTC; **overdue** = status `CONFIRMED` and `dueDate < today`; **revenue** = payments received; **MRR** = ACTIVE subscriptions' line amounts (pre-tax, pre-discount) normalised to a month. Money is always a 2-decimal string.
+Measured against 20k subscriptions / 95k invoices / 80k payments over a 166 ms-per-query link, all endpoints finish in 0.2–1.5 s (budget 2 s); production, with the API next to the DB, will be faster.
+
+### Decisions to confirm
+1. `plan.price` is informational: invoices bill from **subscription lines** (product price + variant extra), as the brief's "lines showing product, quantity, unit price, taxes and amount" describes.
+2. `plan.minQuantity` = minimum **total** quantity across lines, enforced when a quotation is confirmed.
+3. Activating a subscription whose start date is in the past does **not** back-bill: billing starts at the next scheduled date on/after today.
+4. Discounts (Package 5) attach via `SubscriptionDiscount`; `claimDueSubscriptions` already returns them so the engine can apply them.
+
+## Frontend for Packages 3, 4, 8
+
+Code lives in `frontend/features/<name>/` (api hooks, types, views); pages under `frontend/app/(app)/` are thin server components.
+Run `npm test` in `frontend/` for the logic tests (money/preview maths, lifecycle rules, date ranges, chart scales).
+
+| Area | Routes | Notes |
+|---|---|---|
+| Customers | `/customers`, `/customers/:id` | filters live in the URL; create/edit modal; admin-only delete explains why it is refused |
+| Subscriptions | `/subscriptions`, `/subscriptions/new`, `/subscriptions/:id` | template or scratch; live price preview (matches server rounding); lifecycle buttons come from the API's `availableActions`, disabled with a reason when the plan forbids them; `version` is sent on every change (stale edits reload instead of overwriting) |
+| Customer portal | `/my/subscriptions`, `/my/subscriptions/:id`, `/account` (billing details) | same components in `mode="customer"`: no customer column, no editing, no internal notes |
+| Reports | `/reports` (overview), `/reports/invoices`, `/payments`, `/overdue`, `/subscriptions` | one date range shared in the URL; charts are plain SVG using theme tokens (validated blue/orange pair), with tooltip, keyboard and table view |
+| Dashboard | `/dashboard` | staff: this month's finance overview; customers: their own subscriptions |
+
+Gotchas worth knowing:
+- SVG `stroke="var(--x)"` attributes don't work; colours from CSS variables must go through `style` (comment in `line-chart.tsx`).
+- Dynamic routes (`[id]`) need a `<Suspense>` above any client component that reads the URL (Cache Components): see `app/(app)/layout.tsx`.
+- Next keeps previously visited pages mounted (hidden) for instant back-navigation, so don't rely on global DOM queries or fixed ids.
+
+### Demo data
+`cd backend && npm run demo:seed` creates 6 customers, a catalog, 9 subscriptions in every status and ~6 months of invoices/payments (some overdue).
+Logins (password `Demo!Passw0rd1`): `admin@demo.test`, `staff@demo.test`, `customer@demo.test`. `npm run demo:clear` removes exactly that data.

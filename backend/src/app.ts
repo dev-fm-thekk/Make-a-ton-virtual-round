@@ -8,7 +8,10 @@ import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { customersRouter, meRouter } from "./modules/customers/customers.routes.js";
 import { healthRouter } from "./modules/health/health.routes.js";
+import { reportsRouter } from "./modules/reports/reports.routes.js";
+import { subscriptionsRouter } from "./modules/subscriptions/subscriptions.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
 
 export function createApp() {
@@ -40,6 +43,10 @@ export function createApp() {
   const v1 = express.Router();
   v1.use("/auth", authRouter);
   v1.use("/users", usersRouter);
+  v1.use("/customers", customersRouter);
+  v1.use("/me", meRouter);
+  v1.use("/subscriptions", subscriptionsRouter);
+  v1.use("/reports", reportsRouter);
   app.use("/api/v1", v1);
 
   app.use(notFoundHandler);
