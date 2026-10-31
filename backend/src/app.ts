@@ -8,8 +8,11 @@ import { env } from "./config/env.js";
 import { logger } from "./lib/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { billingRouter } from "./modules/billing/billing.routes.js";
 import { customersRouter, meRouter } from "./modules/customers/customers.routes.js";
 import { healthRouter } from "./modules/health/health.routes.js";
+import { invoicesRouter } from "./modules/invoices/invoices.routes.js";
+import { paymentsRouter } from "./modules/payments/payments.routes.js";
 import { reportsRouter } from "./modules/reports/reports.routes.js";
 import { subscriptionsRouter } from "./modules/subscriptions/subscriptions.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
@@ -46,6 +49,9 @@ export function createApp() {
   v1.use("/customers", customersRouter);
   v1.use("/me", meRouter);
   v1.use("/subscriptions", subscriptionsRouter);
+  v1.use("/billing", billingRouter);
+  v1.use("/invoices", invoicesRouter);
+  v1.use("/invoices", paymentsRouter); // POST|GET /invoices/:id/payments
   v1.use("/reports", reportsRouter);
   app.use("/api/v1", v1);
 

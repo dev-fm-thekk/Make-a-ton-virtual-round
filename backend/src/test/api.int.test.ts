@@ -412,6 +412,8 @@ describe("reports", () => {
           amountPaid: paid,
           billToName: `${TAG} A`,
           billToEmail: custA.email,
+          confirmedAt: status === "DRAFT" ? null : new Date(),
+          paidAt: status === "PAID" ? new Date() : null,
         },
       });
     invOverdue = (await mk(1, "CONFIRMED", -60, -45, -35, 100, 25)).id; // 35 days overdue, 75 left

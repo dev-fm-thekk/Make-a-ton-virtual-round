@@ -5,6 +5,7 @@ export type Decimal = Prisma.Decimal;
 export type Num = Prisma.Decimal | string | number;
 export const D = (v: Num): Decimal => new Prisma.Decimal(v);
 export const ZERO = D(0);
+export const ROUND_HALF_UP = Prisma.Decimal.ROUND_HALF_UP;
 
 /** Money rounds half-up to 2 decimals (the usual invoicing convention). */
 export const round2 = (v: Num): Decimal => D(v).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);

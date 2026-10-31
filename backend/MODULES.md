@@ -25,8 +25,8 @@ Reference implementation to copy: `src/modules/users/users.routes.ts` and `src/m
 | 3 | **Customers** ✅ | Customer | `/customers` (staff CRUD, search); `/me/profile` (customer edits own) | Staff/Admin; Customer = self | – |
 | 4 | **Subscriptions** ✅ | Subscription, SubscriptionLine, SubscriptionStatusHistory | `/subscriptions` CRUD, lines, `POST /:id/transition` (confirm/activate/pause/resume/close/renew), create-from-template; customer portal `GET` of own | Staff/Admin write; Customer read-own | 1, 2, 3 (code against the schema; use seed data) |
 | 5 | **Discounts** | Discount, DiscountProduct, SubscriptionDiscount | `/discounts` CRUD (admin only), attach to products / subscriptions | Admin | 1 |
-| 6 | **Billing engine & invoices** | BillingRun, Invoice, InvoiceLine, DiscountRedemption | `POST /billing/run`, `/invoices` list/get, `confirm` / `cancel` / `send` / `print` (PDF/HTML), customer portal read-own | Staff/Admin; Customer read-own | 4, 5 (calls their services) |
-| 7 | **Payments** | Payment | `POST /invoices/:id/payments` (idempotency key), `GET /payments`, `GET /invoices/:id/payments` | Staff/Admin record; Customer read-own | 6 |
+| 6 | **Billing engine & invoices** ✅ | BillingRun, Invoice, InvoiceLine, DiscountRedemption | `POST /billing/run`, `/invoices` list/get, `confirm` / `cancel` / `send` / `print` (PDF/HTML), customer portal read-own | Staff/Admin; Customer read-own | 4, 5 (calls their services) |
+| 7 | **Payments** ✅ | Payment | `POST /invoices/:id/payments` (idempotency key), `GET /payments`, `GET /invoices/:id/payments` | Staff/Admin record; Customer read-own | 6 |
 | 8 | **Reporting** ✅ | – (read-only SQL over everything) | `/reports/summary`, `/reports/revenue`, `/reports/overdue`, `/reports/subscriptions` (filters, paging) | Admin/Staff | 4, 6, 7 |
 | F | **Frontend** (Next.js, `frontend/`) | – | consumes the API | – | contracts below |
 
@@ -37,7 +37,7 @@ auth screens + layouts against `/auth/*`, then follow the API as packages land.
 
 **4 Subscriptions** – allowed transitions: `DRAFT→QUOTATION→CONFIRMED→ACTIVE`, `ACTIVE⇄PAUSED` (only if `plan.allowPause`), `ACTIVE|PAUSED→CLOSED` (early close only if `plan.allowEarlyClose`), renewal only if `plan.allowRenewal`. Every transition: check `version` (optimistic lock), write `SubscriptionStatusHistory`, in one tx. Number via `nextDocumentNumber(tx, "SUB")`. On activate, set `nextBillingDate = startDate`; clear it on close. `plan.autoCloseOnEnd` is closed by a daily job (owner: 6's scheduler).
 
-**5 Discounts** – export a pure function `findApplicableDiscounts(lines, subscription, asOf)` that Package 6 calls. Redemption is a guarded update: `UPDATE discounts SET "usedCount"="usedCount"+1 WHERE id=$1 AND ("usageLimit" IS NULL OR "usedCount"<"usageLimit")`; 0 rows → not applied.
+**5 Discounts** – only CRUD + attaching (`DiscountProduct`, `SubscriptionDiscount`). The calculation lives in the billing engine (`billing/calc.ts`, already done and tested), so Package 5 must NOT change `usedCount` itself. For reference, redemption is a guarded update: `UPDATE discounts SET "usedCount"="usedCount"+1 WHERE id=$1 AND ("usageLimit" IS NULL OR "usedCount"<"usageLimit")`; 0 rows → not applied.
 
 **6 Billing** – the engine must be: (a) **idempotent** – relies on the partial unique index `(subscriptionId, periodStart)`; catch the unique violation and count it as "skipped"; (b) **concurrent-safe** – claim work with `SELECT … FOR UPDATE SKIP LOCKED`; (c) **atomic per subscription** – invoice + lines + `DiscountRedemption` + `nextBillingDate` advance in one tx; one failing subscription must not abort the run (record in `BillingRun.errors`). Invoice number assigned on confirm via `nextDocumentNumber(tx, "INV")`. Totals must satisfy `total = subtotal − discountTotal + taxTotal` (DB CHECK).
 
@@ -124,3 +124,43 @@ Gotchas worth knowing:
 ### Demo data
 `cd backend && npm run demo:seed` creates 6 customers, a catalog, 9 subscriptions in every status and ~6 months of invoices/payments (some overdue).
 Logins (password `Demo!Passw0rd1`): `admin@demo.test`, `staff@demo.test`, `customer@demo.test`. `npm run demo:clear` removes exactly that data.
+
+## Implemented: Packages 6 and 7 (billing, invoices, payments)
+
+Tests: `npm test` (unit, incl. the pure invoice calculator), `npm run test:integration` (real DB: engine, concurrency, discounts, invoices, payments; ~7 min over a remote DB),
+`npx tsx --env-file=.env scripts/perf-billing.ts [n]` (seeds n due subscriptions, bills them at 1/4/8 workers, cleans up).
+
+### How billing works
+1. **Billing day:** the scheduler (or an admin) runs the engine. It claims due ACTIVE subscriptions one at a time with `FOR UPDATE SKIP LOCKED`, builds the invoice, applies discounts, and moves `nextBillingDate`, **all in one transaction per invoice**.
+2. **Nothing billed twice:** one live invoice per (subscription, period): checked in the transaction and enforced by a unique index. **Nothing skipped:** a failure rolls the invoice back and the subscription stays due; late subscriptions catch up one period per invoice.
+3. Invoices are created as **DRAFT** (no number) for review, then confirmed (numbered `INV-YYYY-nnnnnn`, gap-free), or created confirmed when `autoConfirm` is on. Zero-value invoices settle themselves on confirm.
+4. **Discounts** (rules in `billing/calc.ts`): applied before tax; product-scoped first, then subscription-scoped, each on what is left; min quantity/purchase checked on the targeted lines' original amounts; a discount is split across lines to the exact cent. Usage limits are a guarded `UPDATE` (exactly `usageLimit` invoices win, however many workers race); cancelling an unpaid invoice gives the use back.
+
+### Endpoints
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /billing/preview?asOf` | staff | due subscriptions + rough total (before discounts) |
+| `POST /billing/run` `{asOf?, autoConfirm?, subscriptionId?}` `?wait=true` | admin | 202 + run to poll; `wait=true` blocks; 409 `RUN_IN_PROGRESS` if another is live |
+| `GET /billing/runs`, `GET /billing/runs/:id` | staff | counters, errors per subscription, invoiced total |
+| `GET /invoices` (status, customerId, subscriptionId, billingRunId, search, from/to, overdue, sort) | staff all; customer own **issued** invoices | totals over the whole filtered set |
+| `GET /invoices/:id` | same scope (404 otherwise) | lines, discounts, payments, `availableActions` |
+| `POST /invoices/:id/confirm` · `/cancel {reason}` · `/send` | staff | confirm numbers it; cancel only while nothing is paid; send emails `billToEmail` |
+| `POST /invoices/bulk-confirm {ids \| billingRunId}` | staff | up to 500 per call, each in its own transaction |
+| `POST /invoices/:id/reissue` | admin | rebuilds a cancelled period (current lines/prices/discounts) |
+| `GET /invoices/:id/print` | staff, or the owner | print-ready HTML (escaped); fetch with the bearer token and print/save as PDF |
+| `POST /invoices/:id/payments` `{method, amount, paidAt?, reference?, note?}` + header `Idempotency-Key` | staff | 201 new, 200 replay of the same key |
+| `GET /invoices/:id/payments` | staff, or the owner | |
+
+Error codes (409 unless noted): `RUN_IN_PROGRESS`, `INVALID_TRANSITION`, `NOT_CONFIRMED`, `HAS_PAYMENTS`, `PERIOD_ALREADY_INVOICED`, `ALREADY_PAID`, `OVERPAYMENT` (`details.balance`), `IDEMPOTENCY_KEY_REUSED`; `MAIL_FAILED` is 502.
+
+### Payments rules
+- Only CONFIRMED invoices take payments; amount > 0, 2 decimals, never more than the balance; date not in the future and not before the invoice was issued.
+- The invoice row is locked for the whole transaction, so concurrent payments are serialised (two payments of 70 against 118: one wins; ten that exactly settle all land). The database also rejects `amountPaid > total`.
+- A fully paid invoice flips to PAID; a receipt email goes to the customer (best effort, never blocks the payment).
+- **Out of scope (by design for now):** refunds/voiding a payment, credit notes, proration, online payment gateways, binary PDFs.
+
+### Operating it
+- Set `BILLING_SCHEDULER=true` on the API instance(s) that should bill (safe on several: a DB unique index lets only one scheduler run per day). It runs at/after `BILLING_RUN_HOUR_UTC`, closes auto-closing expired subscriptions first, then bills.
+- `BILLING_AUTO_CONFIRM=false` (default) leaves drafts for review; `true` numbers them immediately. `BILLING_CONCURRENCY` (1-8) = parallel invoices; keep it under the DB pool size (10).
+- A run stuck RUNNING for 30 min is treated as crashed and no longer blocks new runs. A run is capped at 5,000 invoices; the rest is picked up next run.
+- Measured at 170 ms per DB query (remote): ~8 round trips per invoice → 0.7 invoices/s with 1 worker, 3.7/s with 8. With the API next to the database (1-5 ms), expect on the order of 100+ invoices/s.

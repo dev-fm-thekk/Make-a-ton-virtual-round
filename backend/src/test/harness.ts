@@ -24,6 +24,8 @@ export async function startServer() {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/v1`;
 }
 
+export const baseUrl = () => base;
+
 export async function stopServer() {
   await new Promise<void>((r) => server.close(() => r()));
 }
@@ -33,10 +35,10 @@ export interface Res<T = any> {
   body: T;
 }
 
-export async function call<T = any>(method: string, path: string, opts: { token?: string; body?: unknown } = {}): Promise<Res<T>> {
+export async function call<T = any>(method: string, path: string, opts: { token?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<Res<T>> {
   const res = await fetch(base + path, {
     method,
-    headers: { "content-type": "application/json", ...(opts.token && { authorization: `Bearer ${opts.token}` }) },
+    headers: { "content-type": "application/json", ...(opts.token && { authorization: `Bearer ${opts.token}` }), ...opts.headers },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   const text = await res.text();
@@ -79,7 +81,9 @@ export async function cleanup() {
   await prisma.payment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
   await prisma.discountRedemption.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
   await prisma.invoice.deleteMany({ where: { id: { in: invoiceIds } } }); // lines cascade
-  await prisma.subscription.deleteMany({ where: { id: { in: subIds } } }); // lines / history cascade
+  await prisma.subscription.deleteMany({ where: { id: { in: subIds } } }); // lines / history / attached discounts cascade
+  await prisma.billingRun.deleteMany({ where: { OR: [{ triggeredBy: { in: userIds } }, { triggeredBy: { startsWith: "zzt" } }, { runDate: { lt: new Date("2005-01-01") } }] } });
+  await prisma.discount.deleteMany({ where: { name: { startsWith: "ZZT" } } }); // product links cascade
   await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: userIds } }, { entityId: { in: [...customerIds, ...subIds, ...userIds] } }] } });
   await prisma.quotationTemplate.deleteMany({ where: { name: { startsWith: "ZZT" } } }); // lines cascade
   await prisma.plan.deleteMany({ where: { name: { startsWith: "ZZT" } } });

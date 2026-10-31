@@ -9,7 +9,9 @@
 //    indexes) live in prisma/migrations/*_constraints_and_indexes/migration.sql.
 
 generator client {
-  provider = "prisma-client"
+  provider        = "prisma-client"
+  // one JOINed query instead of one query per relation (the billing engine loads a subscription graph per invoice)
+  previewFeatures = ["relationJoins"]
   output   = "../src/generated/prisma"
 }
 
