@@ -36,7 +36,7 @@ export function ForgotForm() {
   if (sentTo) {
     return (
       <div className="space-y-4">
-        <Alert tone="success">If an account exists for {sentTo}, a reset link is on its way. It expires in 30 minutes.</Alert>
+        <Alert tone="success">If an account exists for {sentTo}, a reset link is on its way. It expires in 1 hour.</Alert>
         <Link href="/login" className="block text-center text-sm font-medium text-primary hover:underline">
           Back to sign in
         </Link>

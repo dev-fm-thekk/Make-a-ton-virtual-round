@@ -142,14 +142,16 @@ export async function forgotPassword(email: string): Promise<void> {
   ]);
 
   const link = `${env.APP_BASE_URL}/reset-password?token=${encodeURIComponent(token)}`;
+  const minutes = env.PASSWORD_RESET_TTL_MINUTES;
+  const expiryText = minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60} hour${minutes / 60 > 1 ? "s" : ""}` : `${minutes} minutes`;
   sendMailBackground({
     to: user.email,
     subject: "Reset your password",
     text:
-      `Hi ${user.name},\n\nUse the link below to reset your password. It expires in ${env.PASSWORD_RESET_TTL_MINUTES} minutes.\n\n${link}\n\n` +
+      `Hi ${user.name},\n\nUse the link below to reset your password. It expires in ${expiryText}.\n\n${link}\n\n` +
       `If you didn't request this, you can ignore this email.`,
     html:
-      `<p>Hi ${escapeHtml(user.name)},</p><p>Use the link below to reset your password. It expires in ${env.PASSWORD_RESET_TTL_MINUTES} minutes.</p>` +
+      `<p>Hi ${escapeHtml(user.name)},</p><p>Use the link below to reset your password. It expires in ${expiryText}.</p>` +
       `<p><a href="${link}">Reset password</a></p><p>If you didn't request this, you can ignore this email.</p>`,
   });
 }
