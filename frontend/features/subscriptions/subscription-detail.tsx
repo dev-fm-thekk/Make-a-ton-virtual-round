@@ -8,6 +8,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ErrorState, LoadingState, TableWrap, tdClass, THead, thClass } from "@/components/data/list-parts";
 import { Alert, Badge, Button, Card } from "@/components/ui";
+import { SubscriptionDiscounts } from "@/features/discounts/subscription-discounts";
 import { ApiError } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney, todayIso } from "@/lib/format";
 import { subscriptionKeys, useFormOptions, useReplaceLines, useSubscription } from "./api";
@@ -138,6 +139,8 @@ function Loaded({ sub, mode, backHref }: { sub: SubscriptionDetail; mode: "staff
               <Badge tone={sub.plan.allowRenewal ? "success" : "neutral"}>{sub.plan.allowRenewal ? "Renewable" : "Not renewable"}</Badge>
             </div>
           </Card>
+
+          {staff && <SubscriptionDiscounts subscriptionId={sub.id} closed={sub.status === "CLOSED"} />}
 
           {staff && sub.notes && (
             <Card className="p-5">

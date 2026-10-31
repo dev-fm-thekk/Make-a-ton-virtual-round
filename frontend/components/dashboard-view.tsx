@@ -5,6 +5,7 @@ import { ArrowRight } from "lucide-react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/data/list-parts";
 import { useAuth } from "@/lib/auth";
 import { formatDate, formatMoney, todayIso } from "@/lib/format";
+import { SetupChecklist } from "@/features/catalog/setup-checklist";
 import { useInvoices } from "@/features/invoices/api";
 import { useSubscriptions } from "@/features/subscriptions/api";
 import { billingCycle, StatusBadge } from "@/features/subscriptions/labels";
@@ -38,6 +39,7 @@ export function DashboardView() {
           </Link>
         }
       />
+      <SetupChecklist />
       <DraftsNotice />
       <FinanceOverview range={resolveRange("month", {}, todayIso())} />
     </>

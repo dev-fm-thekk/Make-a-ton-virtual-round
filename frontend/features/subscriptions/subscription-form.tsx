@@ -106,6 +106,20 @@ function FormBody({ options, initialCustomer }: { options: FormOptions; initialC
 
       <form onSubmit={submit} className="space-y-6" noValidate>
         {errors.form && <Alert>{errors.form}</Alert>}
+        {(options.plans.length === 0 || options.products.length === 0) && (
+          <Alert>
+            {options.plans.length === 0 && (
+              <>
+                There are no plans available to sell today. <Link href="/plans" className="font-medium underline">Set up a plan</Link>.{" "}
+              </>
+            )}
+            {options.products.length === 0 && (
+              <>
+                There are no active products. <Link href="/products" className="font-medium underline">Add a product</Link>.
+              </>
+            )}
+          </Alert>
+        )}
 
         <Card className="space-y-5 p-6">
           <h2 className="font-semibold">Customer &amp; plan</h2>

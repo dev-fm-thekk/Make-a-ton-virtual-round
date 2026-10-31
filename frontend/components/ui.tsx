@@ -96,6 +96,21 @@ export function Textarea({ label, error, hint, id, className, ref, ...rest }: Te
   );
 }
 
+/** A labelled checkbox with an optional explanation underneath (settings like "Active", "Make default"). */
+export function CheckboxField({ label, hint, id, className, ref, ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & { label: string; hint?: ReactNode; ref?: Ref<HTMLInputElement> }) {
+  const auto = useId();
+  const fid = id ?? auto;
+  return (
+    <div className={clsx("flex items-start gap-3", className)}>
+      <input id={fid} ref={ref} type="checkbox" className="mt-1 size-4 shrink-0 accent-[var(--primary)]" {...rest} />
+      <label htmlFor={fid} className="text-sm">
+        <span className="font-medium">{label}</span>
+        {hint && <span className="block text-muted">{hint}</span>}
+      </label>
+    </div>
+  );
+}
+
 // ───────── Card / Badge / Alert ─────────
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return <div className={clsx("rounded-xl border border-border bg-surface shadow-sm", className)}>{children}</div>;

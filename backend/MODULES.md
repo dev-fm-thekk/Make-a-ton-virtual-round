@@ -217,3 +217,19 @@ Reviewed and hardened after the first delivery. Tests: `src/test/masterdata.int.
 ### Decisions you may want to revisit
 - Staff can read discounts but **only admins attach them to subscriptions** (the brief says only the admin creates discount rules; applying them is stricter than required). Loosen `POST/DELETE /discounts/:id/subscriptions` to `requireStaff` if sales reps should do it.
 - Deactivating a tax keeps charging it on products/lines that already use it (it only stops being *offered*). Move products to a new tax first if the old one should stop applying.
+
+## Frontend for packages 1, 2 and 5
+
+Screens (staff read, admin write; writes are hidden for staff and enforced by the API):
+
+| Route | Feature folder | Notes |
+|---|---|---|
+| `/taxes`, `/payment-terms` | `frontend/features/catalog` | list plus modal forms; deletes show the API's `IN_USE` message inline |
+| `/products`, `/products/[id]` | `frontend/features/catalog` | variants are managed on the product page |
+| `/plans` | `frontend/features/plans` | billing cycle fields lock while `liveSubscriptions > 0` |
+| `/quotation-templates`, `/new`, `/[id]` | `frontend/features/templates` | lines editor, shows `usable` and `problems` |
+| `/discounts`, `/discounts/[id]` | `frontend/features/discounts` | status chips, product detach, redemptions table |
+
+Wiring: any catalog change invalidates the `/subscriptions/options` cache; the subscription page has a Discounts card
+(admin attaches or detaches subscription-scoped discounts); the staff dashboard shows a setup checklist until a payment
+term, product and plan exist; the subscription form links to Plans/Products when they are missing.

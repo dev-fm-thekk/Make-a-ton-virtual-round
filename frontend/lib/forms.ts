@@ -19,3 +19,8 @@ export function applyApiError<T extends FieldValues>(err: unknown, setError: Use
   }
   return err.message;
 }
+
+/** A sentence for toasts and dialogs. The API's own messages are already plain language ("still used by 2 products…"). */
+export function errorMessage(err: unknown, fallback = "Something went wrong. Please try again."): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
