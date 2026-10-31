@@ -5,6 +5,8 @@ import { SubscriptionDetailRoute } from "@/features/routes";
 
 export const metadata: Metadata = { title: "Subscription" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function Page() {
   return (
     <Suspense fallback={<LoadingState />}>

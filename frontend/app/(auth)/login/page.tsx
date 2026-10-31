@@ -3,6 +3,8 @@ import { LoginForm } from "@/components/auth/login-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function LoginPage() {
   return (
     <>

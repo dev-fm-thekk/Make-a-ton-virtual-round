@@ -164,3 +164,18 @@ Error codes (409 unless noted): `RUN_IN_PROGRESS`, `INVALID_TRANSITION`, `NOT_CO
 - `BILLING_AUTO_CONFIRM=false` (default) leaves drafts for review; `true` numbers them immediately. `BILLING_CONCURRENCY` (1-8) = parallel invoices; keep it under the DB pool size (10).
 - A run stuck RUNNING for 30 min is treated as crashed and no longer blocks new runs. A run is capped at 5,000 invoices; the rest is picked up next run.
 - Measured at 170 ms per DB query (remote): ~8 round trips per invoice → 0.7 invoices/s with 1 worker, 3.7/s with 8. With the API next to the database (1-5 ms), expect on the order of 100+ invoices/s.
+
+## Frontend for Packages 6 and 7
+
+| Area | Routes | Notes |
+|---|---|---|
+| Billing | `/billing` (admin + staff; only admins can run) | "what is due" preview, start a run (date, confirm-now option), live progress, run history, per-run detail with problems and a link to review its drafts |
+| Invoices (staff) | `/invoices`, `/invoices/:id` | views (drafts, awaiting payment, overdue, paid, cancelled), search, filter by billing run / customer in the URL; select drafts and confirm in bulk; detail page with confirm, cancel (reason), send, print, reissue (admin), record payment |
+| Payments | `/payments` | the payments report (same data as Reports → Payments); recording happens on the invoice |
+| Customer portal | `/my/invoices`, `/my/invoices/:id` | their own issued invoices (never drafts), balances, payments, print; no staff actions |
+| Links | subscription page → its latest invoices; customer page → "View invoices"; dashboard → "N drafts waiting for review" | |
+
+Notes for whoever extends it:
+- The **record payment** dialog creates one `Idempotency-Key` per opening, so pressing Record twice (or retrying after a timeout) can only ever create one payment.
+- **Print** fetches the escaped HTML with the bearer token (`fetchText` in `lib/api.ts`) and writes it into a new tab: the tab is opened inside the click because browsers block pop-ups opened after an `await`.
+- Money maths is never done in the browser for invoices: it only displays what the API computed (the subscription line editor has a preview, invoices don't).

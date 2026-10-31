@@ -6,6 +6,7 @@
 
 import { useParams } from "next/navigation";
 import { CustomerDetailView } from "./customers/customer-detail";
+import { InvoiceDetailView } from "./invoices/invoice-detail";
 import { SubscriptionDetailView } from "./subscriptions/subscription-detail";
 
 export function CustomerDetailRoute() {
@@ -16,4 +17,9 @@ export function CustomerDetailRoute() {
 export function SubscriptionDetailRoute({ mode, backHref }: { mode: "staff" | "customer"; backHref: string }) {
   const { id } = useParams<{ id: string }>();
   return <SubscriptionDetailView id={id} mode={mode} backHref={backHref} />;
+}
+
+export function InvoiceDetailRoute({ mode, backHref }: { mode: "staff" | "customer"; backHref: string }) {
+  const { id } = useParams<{ id: string }>();
+  return <InvoiceDetailView id={id} mode={mode} backHref={backHref} />;
 }

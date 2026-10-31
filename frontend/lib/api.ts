@@ -86,6 +86,8 @@ interface Opts {
   body?: unknown;
   query?: Record<string, string | number | boolean | undefined | null>;
   auth?: boolean;
+  /** Extra request headers (e.g. Idempotency-Key). */
+  headers?: Record<string, string>;
 }
 
 export async function api<T = unknown>(method: string, path: string, opts: Opts = {}): Promise<T> {
@@ -95,7 +97,7 @@ export async function api<T = unknown>(method: string, path: string, opts: Opts 
         Object.entries(opts.query).filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => [k, String(v)]),
       ).toString()
     : "";
-  const init = { method, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), auth: opts.auth };
+  const init = { method, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), auth: opts.auth, headers: opts.headers };
 
   let res = await raw(path + (qs === "?" ? "" : qs), init);
   if (res.status === 401 && opts.auth !== false) {
@@ -114,3 +116,19 @@ export const get = <T>(path: string, query?: Opts["query"]) => api<T>("GET", pat
 export const post = <T>(path: string, body?: unknown, auth?: boolean) => api<T>("POST", path, { body, auth });
 export const patch = <T>(path: string, body?: unknown) => api<T>("PATCH", path, { body });
 export const del = <T>(path: string) => api<T>("DELETE", path);
+
+/** GET a non-JSON body (e.g. the printable invoice HTML) with the same auth and silent token refresh as api(). */
+export async function fetchText(path: string): Promise<string> {
+  let res = await raw(path, { method: "GET" });
+  if (res.status === 401) {
+    const session = await refreshSession();
+    if (!session) {
+      accessToken = null;
+      expiredListeners.forEach((fn) => fn());
+    } else {
+      res = await raw(path, { method: "GET" });
+    }
+  }
+  if (!res.ok) throw new ApiError(res.status, "UNKNOWN", res.statusText);
+  return res.text();
+}

@@ -5,6 +5,8 @@ import { InvoicesReport } from "@/features/reports/invoices-report";
 
 export const metadata: Metadata = { title: "Invoice report" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function Page() {
   return (
     <Suspense fallback={<LoadingState />}>

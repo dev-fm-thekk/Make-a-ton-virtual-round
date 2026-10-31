@@ -1,9 +1,7 @@
 import { Repeat } from "lucide-react";
 import { GuestOnly } from "@/components/auth/guest-only";
 
-// Session lives in memory + an httpOnly cookie, so the server can't know who is signed in; this subtree
-// renders after a client-side session check and is intentionally not "instant" (see lib/auth.tsx).
-export const instant = false;
+export const instant = false; // see the note in app/layout.tsx
 
 export default function AuthLayout({ children }: LayoutProps<"/">) {
   return (

@@ -73,3 +73,11 @@ body {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
+
+/* Still scrolls (wheel, touch, keyboard) but never draws a scrollbar: used where a bar would clutter the chrome. */
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}

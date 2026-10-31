@@ -5,6 +5,8 @@ import { SubscriptionsList } from "@/features/subscriptions/subscriptions-list";
 
 export const metadata: Metadata = { title: "My subscriptions" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function Page() {
   return (
     <Suspense fallback={<LoadingState />}>

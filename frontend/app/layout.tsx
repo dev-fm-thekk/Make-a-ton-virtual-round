@@ -18,6 +18,13 @@ export const metadata: Metadata = {
   description: "Subscription management, recurring billing and revenue reporting.",
 };
 
+// Next's dev-time "instant navigation" check wants every segment to prerender a meaningful static shell.
+// This app can't: who is signed in lives in memory + an httpOnly cookie, so every screen renders after a
+// client-side session check (see lib/auth.tsx). Opt the whole app out once, here, instead of per segment
+// The opt-out is per segment (it does not inherit), so each page.tsx / layout.tsx repeats the one-liner.
+// Without it, every route logs a "Could not validate instant navigation" error in dev.
+export const instant = false;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>

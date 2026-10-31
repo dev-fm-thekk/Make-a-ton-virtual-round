@@ -5,6 +5,8 @@ import { Spinner } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Reset password" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function ResetPasswordPage() {
   return (
     <>

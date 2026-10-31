@@ -9,9 +9,9 @@ import { useUrlParams } from "@/lib/hooks";
 import { usePaymentsReport } from "./api";
 import { HBarChart } from "./charts/h-bar-chart";
 import { RangeBar, useReportRange } from "./range-bar";
+import { PAYMENT_METHOD_LABEL as METHOD_LABEL } from "../invoices/labels";
 import type { PaymentMethod } from "./types";
 
-const METHOD_LABEL: Record<PaymentMethod, string> = { CASH: "Cash", BANK_TRANSFER: "Bank transfer", CARD: "Card", UPI: "UPI", CHEQUE: "Cheque", OTHER: "Other" };
 const DEFAULTS = { method: "", search: "", sort: "-paidAt", page: "1" };
 
 export function PaymentsReport() {

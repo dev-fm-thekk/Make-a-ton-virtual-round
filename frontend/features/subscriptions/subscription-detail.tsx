@@ -13,6 +13,7 @@ import { formatDate, formatDateTime, formatMoney, todayIso } from "@/lib/format"
 import { subscriptionKeys, useFormOptions, useReplaceLines, useSubscription } from "./api";
 import { ActionDialog } from "./action-dialog";
 import { DetailsModal } from "./details-modal";
+import { SubscriptionInvoices } from "../invoices/invoices-list";
 import { ACTION_ORDER, ACTIONS, billingCycle, ERROR_HINTS, STATUS_LABEL, StatusBadge } from "./labels";
 import { LinesEditor } from "./lines-editor";
 import { fromSavedLines, lineProblem, toPayload } from "./preview";
@@ -108,6 +109,7 @@ function Loaded({ sub, mode, backHref }: { sub: SubscriptionDetail; mode: "staff
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="space-y-6">
           <LinesPanel sub={sub} editable={editable} />
+          {(sub.activatedAt || sub.status === "ACTIVE" || sub.status === "PAUSED" || sub.status === "CLOSED") && <SubscriptionInvoices subscriptionId={sub.id} mode={mode} />}
           {sub.history.length > 0 && <History sub={sub} showActor={staff} />}
         </div>
 

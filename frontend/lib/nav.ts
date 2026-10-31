@@ -1,6 +1,7 @@
 import {
   BadgePercent,
   BarChart3,
+  CalendarClock,
   CreditCard,
   FileText,
   LayoutDashboard,
@@ -30,8 +31,9 @@ export const NAV: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "STAFF", "CUSTOMER"], ready: true },
 
   { label: "Subscriptions", href: "/subscriptions", icon: Repeat, roles: ["ADMIN", "STAFF"], ready: true },
-  { label: "Invoices", href: "/invoices", icon: Receipt, roles: ["ADMIN", "STAFF"], ready: false },
-  { label: "Payments", href: "/payments", icon: CreditCard, roles: ["ADMIN", "STAFF"], ready: false },
+  { label: "Invoices", href: "/invoices", icon: Receipt, roles: ["ADMIN", "STAFF"], ready: true },
+  { label: "Billing", href: "/billing", icon: CalendarClock, roles: ["ADMIN", "STAFF"], ready: true },
+  { label: "Payments", href: "/payments", icon: CreditCard, roles: ["ADMIN", "STAFF"], ready: true },
   { label: "Customers", href: "/customers", icon: Users, roles: ["ADMIN", "STAFF"], ready: true },
   { label: "Reports", href: "/reports", icon: BarChart3, roles: ["ADMIN", "STAFF"], ready: true },
 
@@ -42,7 +44,7 @@ export const NAV: NavItem[] = [
   { label: "Team & users", href: "/users", icon: UserCog, roles: ["ADMIN"], ready: true },
 
   { label: "My subscriptions", href: "/my/subscriptions", icon: Repeat, roles: ["CUSTOMER"], ready: true },
-  { label: "My invoices", href: "/my/invoices", icon: Receipt, roles: ["CUSTOMER"], ready: false },
+  { label: "My invoices", href: "/my/invoices", icon: Receipt, roles: ["CUSTOMER"], ready: true },
 
   { label: "Account", href: "/account", icon: UserRound, roles: ["ADMIN", "STAFF", "CUSTOMER"], ready: true },
 ];

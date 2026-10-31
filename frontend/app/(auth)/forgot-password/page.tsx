@@ -3,6 +3,8 @@ import { ForgotForm } from "@/components/auth/forgot-form";
 
 export const metadata: Metadata = { title: "Forgot password" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function ForgotPasswordPage() {
   return (
     <>

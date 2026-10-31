@@ -79,11 +79,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Label hidden={compact}>Brightloop</Label>
       </div>
 
-      <ul className="flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden p-2">
+      <ul className="scrollbar-none flex-1 space-y-0.5 overflow-y-auto overflow-x-hidden p-2">
         {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
-          const base = "flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm";
+          const base = "flex items-center gap-3 rounded-lg px-4 py-2 text-sm";
           return (
             <li key={item.href}>
               {item.ready ? (
@@ -126,7 +126,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           onClick={() => void logout()}
           aria-label="Sign out"
           title={compact ? "Sign out" : undefined}
-          className="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-sm text-muted hover:bg-surface-2 hover:text-foreground"
+          className="flex w-full items-center gap-3 rounded-lg px-4 py-2 text-sm text-muted hover:bg-surface-2 hover:text-foreground"
         >
           <LogOut className="size-4 shrink-0" aria-hidden />
           <Label hidden={compact}>Sign out</Label>

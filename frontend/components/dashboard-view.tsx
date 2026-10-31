@@ -5,11 +5,12 @@ import { ArrowRight } from "lucide-react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/data/list-parts";
 import { useAuth } from "@/lib/auth";
 import { formatDate, formatMoney, todayIso } from "@/lib/format";
+import { useInvoices } from "@/features/invoices/api";
 import { useSubscriptions } from "@/features/subscriptions/api";
 import { billingCycle, StatusBadge } from "@/features/subscriptions/labels";
 import { FinanceOverview } from "@/features/reports/overview";
 import { resolveRange } from "@/features/reports/range";
-import { Card, PageHeader } from "./ui";
+import { Alert, Card, PageHeader } from "./ui";
 
 /** Staff land on the finance picture for this month; customers on their own subscriptions. */
 export function DashboardView() {
@@ -37,6 +38,7 @@ export function DashboardView() {
           </Link>
         }
       />
+      <DraftsNotice />
       <FinanceOverview range={resolveRange("month", {}, todayIso())} />
     </>
   );
@@ -104,6 +106,27 @@ function CustomerHome() {
           ))}
         </ul>
       </Card>
+    </div>
+  );
+}
+
+/** Staff nudge: invoices a billing run produced are waiting for someone to review and confirm them. */
+function DraftsNotice() {
+  const drafts = useInvoices({ status: "DRAFT", limit: 1 });
+  const n = drafts.data?.total ?? 0;
+  if (n === 0) return null;
+  return (
+    <div className="mb-6">
+      <Alert tone="success">
+        <span className="flex flex-wrap items-center justify-between gap-2">
+          <span>
+            {n} draft invoice{n === 1 ? " is" : "s are"} waiting for review.
+          </span>
+          <Link href="/invoices?view=draft" className="font-medium underline">
+            Review drafts
+          </Link>
+        </span>
+      </Alert>
     </div>
   );
 }

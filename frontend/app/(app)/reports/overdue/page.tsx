@@ -5,6 +5,8 @@ import { OverdueReport } from "@/features/reports/overdue-report";
 
 export const metadata: Metadata = { title: "Overdue invoices" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function Page() {
   return (
     <Suspense fallback={<LoadingState />}>

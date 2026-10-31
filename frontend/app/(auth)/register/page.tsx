@@ -3,6 +3,8 @@ import { RegisterForm } from "@/components/auth/register-form";
 
 export const metadata: Metadata = { title: "Create account" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function RegisterPage() {
   return (
     <>

@@ -5,6 +5,8 @@ import { PaymentsReport } from "@/features/reports/payments-report";
 
 export const metadata: Metadata = { title: "Payment report" };
 
+export const instant = false; // see the note in app/layout.tsx
+
 export default function Page() {
   return (
     <Suspense fallback={<LoadingState />}>

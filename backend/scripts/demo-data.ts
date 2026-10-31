@@ -30,6 +30,7 @@ async function clear() {
   await prisma.payment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
   await prisma.discountRedemption.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
   await prisma.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+  await prisma.billingRun.deleteMany({ where: { triggeredBy: { in: userIds } } }); // runs started from the demo admin account
   await prisma.subscription.deleteMany({ where: { id: { in: subIds } } });
   await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: userIds } }, { entityId: { in: [...customerIds, ...subIds, ...userIds] } }] } });
   await prisma.quotationTemplate.deleteMany({ where: { name: { endsWith: SUFFIX } } });
