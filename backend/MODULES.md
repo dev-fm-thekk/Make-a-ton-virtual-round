@@ -50,3 +50,14 @@ auth screens + layouts against `/auth/*`, then follow the API as packages land.
 - JSON error shape: `{ error: { code, message, details? } }`. Lists: `{ items, page, limit, total, totalPages }`. Money as strings (`"1250.00"`), dates as ISO strings.
 - Package 6 → 4: `subscriptionService.getBillable(tx, asOf, batchSize)` and `advanceBilling(tx, subscriptionId)`. Package 6 → 5: `findApplicableDiscounts`. Package 8 reads tables directly (read-only).
 - Seed data (`npm run db:seed`) provides the admin and payment terms; add catalog fixtures to `prisma/seed.ts` so everyone develops against the same data.
+
+## Frontend conventions (`frontend/`)
+
+Run both: `cd backend && npm run dev` (:4000) and `cd frontend && cp .env.example .env.local && npm run dev` (:3000).
+The browser only calls `/api/v1/*` on the Next origin; `next.config.ts` proxies it to the API (first-party cookie, no CORS).
+
+- **Add a screen:** create `frontend/app/(app)/<route>/page.tsx` (server component exporting `metadata`, rendering a `"use client"` view in `components/<feature>/`), then flip `ready: true` in `frontend/lib/nav.ts`. Auth gating, role-filtered sidebar and the shell are automatic.
+- **Call the API** only through `lib/api.ts` (`get/post/patch/del`): it attaches the token, refreshes on 401 and throws `ApiError`. Read data with TanStack Query (`useQuery`, `useMutation`; see `components/users/users-view.tsx`).
+- **Forms:** react-hook-form + zod; surface server errors with `applyApiError` (`lib/forms.ts`).
+- **UI:** build from `components/ui.tsx` (Button, Input, Select, Card, Badge, Modal, PageHeader…) and the semantic colour tokens in `globals.css` (`bg-surface`, `text-muted`…), never raw colours.
+- Next.js 16 with Cache Components: pages that call `useSearchParams` need a `<Suspense>` boundary. Read `frontend/node_modules/next/dist/docs/` before using Next APIs from memory.
