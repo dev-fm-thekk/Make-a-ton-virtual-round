@@ -11,6 +11,7 @@ import { Alert, Badge, Button, Card, Input, Modal, PageHeader } from "@/componen
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDate, formatDateTime, formatMoney, plural, todayIso } from "@/lib/format";
+import { SchedulerCard } from "./scheduler-card";
 import { useRun, useRuns, usePreview, useStartRun, type BillingRun, type RunStatus } from "./api";
 
 const STATUS: Record<RunStatus, { label: string; tone: "primary" | "success" | "warning" | "danger" }> = {
@@ -34,7 +35,7 @@ export function BillingPage() {
 
   return (
     <>
-      <PageHeader title="Billing" description="Turn due subscriptions into invoices. This also runs automatically every day when the scheduler is on." />
+      <PageHeader title="Billing" description="Turn due subscriptions into invoices. It can also run automatically every day: see the scheduler below." />
 
       <Card className="mb-6 p-6">
         {preview.isPending ? (
@@ -75,6 +76,8 @@ export function BillingPage() {
         )}
       </Card>
 
+      <SchedulerCard isAdmin={isAdmin} />
+
       {watching && <LiveRun id={watching} onOpen={() => setOpenRun(watching)} onDismiss={() => setWatching(null)} />}
 
       <Card className="overflow-hidden">
@@ -84,7 +87,7 @@ export function BillingPage() {
         ) : runs.isError ? (
           <ErrorState message="Could not load billing runs." onRetry={() => void runs.refetch()} />
         ) : runs.data.items.length === 0 ? (
-          <EmptyState title="No billing runs yet" hint="Press Run billing once subscriptions are due, or turn on the daily scheduler." />
+          <EmptyState title="No billing runs yet" hint="Press Run billing once subscriptions are due, or turn on the daily scheduler above." />
         ) : (
           <TableWrap dimmed={runs.isPlaceholderData}>
             <table className="w-full text-sm">

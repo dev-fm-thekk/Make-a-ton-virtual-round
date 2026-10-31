@@ -19,14 +19,9 @@ const schema = z.object({
 
   APP_BASE_URL: z.string().url().default("http://localhost:3000"),
 
-  // Billing engine. Run the scheduler on ONE instance (or all: a DB guard makes extra runs no-ops).
-  BILLING_SCHEDULER: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
-  /** UTC hour after which the daily run starts (0-23). */
-  BILLING_RUN_HOUR_UTC: z.coerce.number().int().min(0).max(23).default(1),
+  // Billing engine. The daily scheduler (on/off, run hour, auto-confirm) is configured in the app: Billing page.
   /** Invoices built in parallel by one run. Keep below DB pool size (see lib/prisma.ts). */
   BILLING_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(4),
-  /** Scheduled runs confirm (number) invoices immediately instead of leaving drafts for review. */
-  BILLING_AUTO_CONFIRM: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
 
   // Email (nodemailer). Without SMTP_HOST, mail is logged instead of sent (dev only).
   SMTP_HOST: z.string().optional(),

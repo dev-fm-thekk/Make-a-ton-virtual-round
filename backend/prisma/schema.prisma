@@ -511,6 +511,20 @@ model BillingRun {
   @@map("billing_runs")
 }
 
+/// Exactly one row (id = 1, enforced by a CHECK): the daily scheduler's configuration, edited by admins in the Billing page.
+model BillingSettings {
+  id               Int      @id @default(1)
+  schedulerEnabled Boolean  @default(false)
+  /// UTC hour after which the daily run starts (0-23).
+  runHourUtc       Int      @default(1)
+  /// Scheduled runs confirm (number) invoices immediately instead of leaving drafts for review.
+  autoConfirm      Boolean  @default(false)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+  updatedById      String?  @db.Uuid
+
+  @@map("billing_settings")
+}
+
 model Invoice {
   id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// e.g. INV-2026-000456 (see DocumentSequence). Assigned on confirm; null while DRAFT.

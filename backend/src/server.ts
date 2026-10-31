@@ -7,7 +7,7 @@ import { startBillingScheduler } from "./modules/billing/scheduler.js";
 const app = createApp();
 const server = app.listen(env.PORT, () => logger.info(`API listening on :${env.PORT} (${env.NODE_ENV})`));
 
-const stopScheduler = env.BILLING_SCHEDULER ? startBillingScheduler() : () => undefined;
+const stopScheduler = startBillingScheduler();
 
 // Graceful shutdown: stop accepting, drain in-flight requests, close DB pool.
 let shuttingDown = false;

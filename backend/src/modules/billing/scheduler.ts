@@ -1,16 +1,20 @@
 // In-process daily scheduler. Several API instances may all run it: the database decides who bills today
 // (unique index on billing_runs for scheduler runs), the others simply stand down.
+// On/off, run hour and auto-confirm come from billing_settings (see settings.service.ts), not the environment.
 
-import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { todayUtc } from "../../lib/dates.js";
 import { closeExpiredSubscriptions } from "../subscriptions/subscriptions.service.js";
 import { createRun, runInBackground } from "./billing.service.js";
+import { getSettings, SCHEDULER_CHECK_MINUTES } from "./settings.service.js";
 
-const TICK_MS = 5 * 60_000;
+const TICK_MS = SCHEDULER_CHECK_MINUTES * 60_000;
 
-export async function runScheduledBillingOnce(now = new Date()): Promise<"ran" | "not-yet" | "already-ran"> {
-  if (now.getUTCHours() < env.BILLING_RUN_HOUR_UTC) return "not-yet";
+export async function runScheduledBillingOnce(now = new Date()): Promise<"ran" | "disabled" | "not-yet" | "already-ran"> {
+  // Read on every tick: admins switch the scheduler on/off and move the hour from the Billing page.
+  const settings = await getSettings();
+  if (!settings.schedulerEnabled) return "disabled";
+  if (now.getUTCHours() < settings.runHourUtc) return "not-yet";
 
   const run = await createRun({ triggeredBy: "scheduler", asOf: todayUtc(now) });
   if (!run) return "already-ran"; // another instance (or an earlier tick) already claimed today
@@ -22,12 +26,12 @@ export async function runScheduledBillingOnce(now = new Date()): Promise<"ran" |
   } catch (err) {
     logger.error({ err }, "auto-close failed (continuing with billing)");
   }
-  const summary = await runInBackground(run, { triggeredBy: "scheduler", asOf: run.runDate, autoConfirm: env.BILLING_AUTO_CONFIRM });
+  const summary = await runInBackground(run, { triggeredBy: "scheduler", asOf: run.runDate, autoConfirm: settings.autoConfirm });
   logger.info({ runId: run.id, ...summary }, "scheduled billing run finished");
   return "ran";
 }
 
-/** Starts the ticking timer. Returns a stop function for graceful shutdown. */
+/** Starts the ticking timer on every instance; whether anything happens is decided by the settings row. Returns a stop function for graceful shutdown. */
 export function startBillingScheduler(): () => void {
   const tick = () => {
     runScheduledBillingOnce().catch((err) => logger.error({ err }, "billing scheduler tick failed"));
@@ -35,6 +39,6 @@ export function startBillingScheduler(): () => void {
   const timer = setInterval(tick, TICK_MS);
   timer.unref(); // never keep the process alive just for this
   setTimeout(tick, 15_000).unref(); // first check shortly after boot
-  logger.info({ hourUtc: env.BILLING_RUN_HOUR_UTC, autoConfirm: env.BILLING_AUTO_CONFIRM }, "billing scheduler started");
+  logger.info({ everyMinutes: SCHEDULER_CHECK_MINUTES }, "billing scheduler ticking (enable it in Billing settings)");
   return () => clearInterval(timer);
 }

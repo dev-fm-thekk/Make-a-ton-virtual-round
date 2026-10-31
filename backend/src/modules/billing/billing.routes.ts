@@ -2,10 +2,12 @@ import { Router } from "express";
 import { z } from "zod";
 import { audit } from "../../lib/audit.js";
 import { dateOnly } from "../../lib/dates.js";
+import { ANY_FIELD_MESSAGE, boundedInt, hasAnyField } from "../../lib/schemas.js";
 import { idParam, paginationQuery } from "../../lib/shared.js";
 import { auth, authenticate, requireRole, requireStaff } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import * as svc from "./billing.service.js";
+import { describeSettings, updateSettings } from "./settings.service.js";
 
 export const billingRouter = Router();
 billingRouter.use(authenticate, requireStaff);
@@ -49,6 +51,22 @@ billingRouter.post(
     res.status(202).json({ run: await svc.getRun(run.id) });
   },
 );
+
+// ───────── scheduler settings ─────────
+billingRouter.get("/settings", async (_req, res) => {
+  res.json({ settings: await describeSettings() });
+});
+
+const settingsBody = z
+  .object({ schedulerEnabled: z.boolean(), runHourUtc: boundedInt(0, 23), autoConfirm: z.boolean() })
+  .partial()
+  .refine(hasAnyField, ANY_FIELD_MESSAGE);
+
+billingRouter.patch("/settings", requireRole("ADMIN"), validate({ body: settingsBody }), async (req, res) => {
+  await updateSettings(req.body, auth(req).userId);
+  await audit(req, { action: "billing.settings", entityType: "BillingSettings", entityId: "1", metadata: req.body });
+  res.json({ settings: await describeSettings() });
+});
 
 billingRouter.get("/runs", validate({ query: paginationQuery }), async (req, res) => {
   res.json(await svc.listRuns(req.query as never));

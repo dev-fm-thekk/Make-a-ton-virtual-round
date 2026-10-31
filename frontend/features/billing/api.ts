@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { get, post } from "@/lib/api";
+import { get, patch, post } from "@/lib/api";
 import type { Paged } from "@/lib/types";
 
 export type RunStatus = "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED";
@@ -57,5 +57,34 @@ export function useStartRun() {
   return useMutation({
     mutationFn: (v: { asOf?: string; autoConfirm: boolean }) => post<{ run: BillingRunDetail }>("/billing/run", v).then((r) => r.run),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["billing"] }),
+  });
+}
+
+// ───────── daily scheduler settings ─────────
+
+export type ScheduleState = "off" | "waiting" | "due" | "done";
+
+export interface SchedulerSettings {
+  schedulerEnabled: boolean;
+  /** UTC hour (0-23) after which the daily run starts. */
+  runHourUtc: number;
+  autoConfirm: boolean;
+  state: ScheduleState;
+  nextRunAt: string | null;
+  checkEveryMinutes: number;
+  lastScheduledRun: { id: string; runDate: string; status: RunStatus; startedAt: string; finishedAt: string | null; invoiced: number; failed: number } | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+export const useSchedulerSettings = () =>
+  useQuery({ queryKey: ["billing", "settings"], queryFn: () => get<{ settings: SchedulerSettings }>("/billing/settings").then((r) => r.settings) });
+
+export function useUpdateSchedulerSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: Partial<Pick<SchedulerSettings, "schedulerEnabled" | "runHourUtc" | "autoConfirm">>) =>
+      patch<{ settings: SchedulerSettings }>("/billing/settings", v).then((r) => r.settings),
+    onSuccess: (settings) => qc.setQueryData(["billing", "settings"], settings),
   });
 }

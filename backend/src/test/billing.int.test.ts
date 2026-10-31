@@ -2,8 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addDays, nextBillingDate, toDateOnly, todayUtc } from "../lib/dates.js";
 import { prisma } from "../lib/prisma.js";
 import { createRun } from "../modules/billing/billing.service.js";
+import { runScheduledBillingOnce } from "../modules/billing/scheduler.js";
 import { executeRun, type RunSummary } from "../modules/billing/engine.js";
-import { baseUrl, call, cleanup, createStaffUser, disconnect, get, post, registerCustomer, startServer, stopServer, TAG } from "./harness.js";
+import { baseUrl, call, cleanup, createStaffUser, disconnect, get, patch, post, registerCustomer, startServer, stopServer, TAG } from "./harness.js";
 
 const today = todayUtc();
 const T = toDateOnly(today);
@@ -565,3 +566,43 @@ async function fetchHtml(path: string, token: string) {
   const r = await fetch(`${baseUrl()}${path}`, { headers: { authorization: `Bearer ${token}` } });
   return { status: r.status, type: r.headers.get("content-type") ?? "", text: await r.text() };
 }
+
+// ═════════════════════════ scheduler settings ═════════════════════════
+describe("scheduler settings", () => {
+  let original: { schedulerEnabled: boolean; runHourUtc: number; autoConfirm: boolean };
+  beforeAll(async () => {
+    const row = await prisma.billingSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
+    original = { schedulerEnabled: row.schedulerEnabled, runHourUtc: row.runHourUtc, autoConfirm: row.autoConfirm };
+  });
+  // The row is shared by every instance of the real app: always put it back.
+  afterAll(async () => {
+    await prisma.billingSettings.update({ where: { id: 1 }, data: { ...original, updatedById: null } });
+  });
+
+  it("staff can read, only admins can change", async () => {
+    const read = await get("/billing/settings", staff.token);
+    expect(read.status).toBe(200);
+    expect(read.body.settings).toMatchObject({ schedulerEnabled: expect.any(Boolean), runHourUtc: expect.any(Number), checkEveryMinutes: 5 });
+    expect((await patch("/billing/settings", { autoConfirm: true }, staff.token)).status).toBe(403);
+    expect((await get("/billing/settings", custA.token)).status).toBe(403);
+  });
+
+  it("validates and persists changes, recording who made them", async () => {
+    for (const bad of [{}, { runHourUtc: 24 }, { runHourUtc: -1 }, { runHourUtc: 1.5 }, { schedulerEnabled: "yes" }]) {
+      expect((await patch("/billing/settings", bad, admin.token)).status, JSON.stringify(bad)).toBe(400);
+    }
+    const ok = await patch("/billing/settings", { schedulerEnabled: true, runHourUtc: 23, autoConfirm: true }, admin.token);
+    expect(ok.status).toBe(200);
+    expect(ok.body.settings).toMatchObject({ schedulerEnabled: true, runHourUtc: 23, autoConfirm: true, updatedBy: expect.stringContaining("admin") });
+    expect(["waiting", "due", "done"]).toContain(ok.body.settings.state);
+    expect((await get("/billing/settings", staff.token)).body.settings.runHourUtc).toBe(23);
+  });
+
+  it("the scheduler obeys the stored settings", async () => {
+    const early = new Date("2000-01-03T05:00:00Z"); // 05:00 UTC, long ago: never collides with a real run
+    await prisma.billingSettings.update({ where: { id: 1 }, data: { schedulerEnabled: false } });
+    expect(await runScheduledBillingOnce(early)).toBe("disabled");
+    await prisma.billingSettings.update({ where: { id: 1 }, data: { schedulerEnabled: true, runHourUtc: 23 } });
+    expect(await runScheduledBillingOnce(early)).toBe("not-yet");
+  });
+});

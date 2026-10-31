@@ -84,7 +84,7 @@ and `npx tsx --env-file=.env scripts/perf-reports.ts` (seeds ~100k invoices insi
 | `POST /subscriptions` | staff | `{customerId, planId \| quotationTemplateId, startDate, expiryDate?, paymentTermId?, lines?}`; template copies plan + lines and sets `quoteValidUntil`; prices come from the catalog (`salesPrice + variant.extraPrice`) unless `unitPrice` is given |
 | `PATCH /subscriptions/:id` · `PUT /subscriptions/:id/lines` | staff | only in DRAFT/QUOTATION; **`version` required** (optimistic lock) |
 | `POST /subscriptions/:id/transition` `{action, version, reason?, expiryDate?}` | by action (see `state-machine.ts`) | `send_quotation, confirm, activate, pause, resume, close, renew` |
-| `POST /subscriptions/maintenance/close-expired` | admin | closes expired subs on plans with `autoCloseOnEnd` (scheduler should call `closeExpiredSubscriptions()` daily) |
+| `POST /subscriptions/maintenance/close-expired` | admin | closes expired subs on plans with `autoCloseOnEnd` (the daily scheduler calls `closeExpiredSubscriptions()` itself) |
 
 Stable error codes (HTTP 409 unless noted): `STALE_VERSION` (reload and retry), `INVALID_TRANSITION`, `PLAN_RULE` (plan switch forbids it), `PLAN_UNAVAILABLE`, `QUOTE_EXPIRED`, `MIN_QUANTITY`, `NO_LINES`, `NOT_EDITABLE`, `NO_EXPIRY`.
 
@@ -160,8 +160,8 @@ Error codes (409 unless noted): `RUN_IN_PROGRESS`, `INVALID_TRANSITION`, `NOT_CO
 - **Out of scope (by design for now):** refunds/voiding a payment, credit notes, proration, online payment gateways, binary PDFs.
 
 ### Operating it
-- Set `BILLING_SCHEDULER=true` on the API instance(s) that should bill (safe on several: a DB unique index lets only one scheduler run per day). It runs at/after `BILLING_RUN_HOUR_UTC`, closes auto-closing expired subscriptions first, then bills.
-- `BILLING_AUTO_CONFIRM=false` (default) leaves drafts for review; `true` numbers them immediately. `BILLING_CONCURRENCY` (1-8) = parallel invoices; keep it under the DB pool size (10).
+- **The daily scheduler is configured in the app, not the environment.** An admin turns it on/off, picks the start hour (UTC) and chooses drafts vs auto-confirm in **Billing → Daily scheduler** (`GET/PATCH /billing/settings`, one row in `billing_settings`, audited). Every API instance ticks every 5 minutes and reads the row, so changes apply within minutes with no restart; several instances are safe because a DB unique index lets only one scheduler run per day. It closes auto-closing expired subscriptions first, then bills. Enabling it after the day's start hour has passed starts a run at the next tick.
+- Drafts (default) wait for staff review; auto-confirm numbers invoices immediately. `BILLING_CONCURRENCY` (1-8, env) = parallel invoices; keep it under the DB pool size (10). The old `BILLING_SCHEDULER`, `BILLING_RUN_HOUR_UTC` and `BILLING_AUTO_CONFIRM` variables are gone.
 - A run stuck RUNNING for 30 min is treated as crashed and no longer blocks new runs. A run is capped at 5,000 invoices; the rest is picked up next run.
 - Measured at 170 ms per DB query (remote): ~8 round trips per invoice → 0.7 invoices/s with 1 worker, 3.7/s with 8. With the API next to the database (1-5 ms), expect on the order of 100+ invoices/s.
 
