@@ -113,7 +113,7 @@ export function CheckboxField({ label, hint, id, className, ref, ...rest }: Omit
 
 // ───────── Card / Badge / Alert ─────────
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={clsx("rounded-xl border border-border bg-surface shadow-sm", className)}>{children}</div>;
+  return <div className={clsx("rounded-xl border border-border bg-surface/90 shadow-sm backdrop-blur-sm", className)}>{children}</div>;
 }
 
 const tones = {

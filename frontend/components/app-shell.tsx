@@ -1,5 +1,6 @@
 "use client";
 
+import { ThemeToggle } from "./theme-toggle";
 import clsx from "clsx";
 import { ChevronLeft, ChevronRight, LogOut, Menu, Repeat, X } from "lucide-react";
 import Link from "next/link";
@@ -122,6 +123,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </Label>
         </div>
+        <ThemeToggle label={!compact} className="w-full px-4" />
         <button
           onClick={() => void logout()}
           aria-label="Sign out"
@@ -139,7 +141,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex flex-1">
       <aside
         className={clsx(
-          "sticky top-0 hidden h-screen shrink-0 border-r border-border bg-surface transition-[width] duration-200 ease-in-out motion-reduce:transition-none lg:block",
+          "sticky top-0 hidden h-screen shrink-0 border-r border-border bg-surface/80 backdrop-blur-md transition-[width] duration-200 ease-in-out motion-reduce:transition-none lg:block",
           collapsed ? "w-16" : "w-64",
         )}
       >
@@ -167,11 +169,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 items-center gap-3 border-b border-border bg-surface px-4 lg:hidden">
+        <header className="flex h-16 items-center gap-3 border-b border-border bg-surface/80 px-4 backdrop-blur-md lg:hidden">
           <button onClick={() => setOpen((o) => !o)} aria-label={open ? "Close menu" : "Open menu"} className="rounded-lg p-2 hover:bg-surface-2">
             {open ? <X className="size-5" /> : <Menu className="size-5" />}
           </button>
           <span className="font-semibold">Brightloop</span>
+          <ThemeToggle className="ml-auto" />
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-8">{children}</main>
       </div>

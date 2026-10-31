@@ -1,5 +1,6 @@
 import { Repeat } from "lucide-react";
 import { GuestOnly } from "@/components/auth/guest-only";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export const instant = false; // see the note in app/layout.tsx
 
@@ -16,7 +17,8 @@ export default function AuthLayout({ children }: LayoutProps<"/">) {
         </div>
         <p className="text-sm text-primary-foreground/70">© Brightloop Software</p>
       </aside>
-      <div className="flex items-center justify-center p-6 sm:p-12">
+      <div className="relative flex items-center justify-center p-6 sm:p-12">
+        <ThemeToggle className="absolute right-4 top-4" />
         <div className="w-full max-w-md">
           <GuestOnly>{children}</GuestOnly>
         </div>

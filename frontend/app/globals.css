@@ -1,46 +1,51 @@
 @import "tailwindcss";
 
 /* Design tokens. Pages use semantic names (bg-surface, text-muted…), never raw colours,
-   so light/dark and any later rebrand are one-file changes. */
+   so light/dark and any later rebrand are one-file changes.
+   Strictly black and white: the only colour left is status (danger / success / warning).
+   Dark mode is chosen by <html data-theme="dark"> (lib/theme.ts sets it before first paint). */
 :root {
-  --background: #f6f7f9;
+  color-scheme: light;
+  --background: #fafafa;
   --surface: #ffffff;
-  --surface-2: #f1f3f6;
-  --foreground: #14161a;
-  --muted: #5d6573;
-  --border: #e3e6eb;
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
+  --surface-2: #f4f4f5;
+  --foreground: #0a0a0a;
+  --muted: #646464;
+  --border: #e4e4e7;
+  --primary: #0a0a0a;
+  --primary-hover: #2b2b2b;
   --primary-foreground: #ffffff;
   --danger: #dc2626;
   --success: #15803d;
   --warning: #b45309;
-  --ring: #6366f1;
-  /* chart series (categorical slots 1-2, validated light surface) */
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --chart-grid: #e3e6eb;
+  --ring: #0a0a0a;
+  /* chart series: ink and mid-grey (the legend names them, so colour is never the only cue) */
+  --series-1: #0a0a0a;
+  --series-2: #8c8c8c;
+  --chart-grid: #e4e4e7;
+  /* background dots (components/dot-background.tsx) */
+  --dot: rgb(0 0 0 / 0.13);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0d0f12;
-    --surface: #15181d;
-    --surface-2: #1c2026;
-    --foreground: #eceef2;
-    --muted: #9aa3b2;
-    --border: #272c34;
-    --primary: #6366f1;
-    --primary-hover: #7c7ff5;
-    --primary-foreground: #ffffff;
-    --danger: #f87171;
-    --success: #4ade80;
-    --warning: #fbbf24;
-    --ring: #818cf8;
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --chart-grid: #272c34;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #000000;
+  --surface: #0b0b0b;
+  --surface-2: #151515;
+  --foreground: #fafafa;
+  --muted: #a1a1a1;
+  --border: #262626;
+  --primary: #fafafa;
+  --primary-hover: #d4d4d4;
+  --primary-foreground: #0a0a0a;
+  --danger: #f87171;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --ring: #d4d4d4;
+  --series-1: #fafafa;
+  --series-2: #7a7a7a;
+  --chart-grid: #262626;
+  --dot: rgb(255 255 255 / 0.15);
 }
 
 @theme inline {
