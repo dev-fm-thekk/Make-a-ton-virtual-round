@@ -18,6 +18,17 @@ const schema = z.object({
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(30),
 
   APP_BASE_URL: z.string().url().default("http://localhost:3000"),
+
+  // Email (nodemailer). Without SMTP_HOST, mail is logged instead of sent (dev only).
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().default(587),
+  SMTP_SECURE: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
+  MAIL_FROM: z.string().default("Brightloop Billing <no-reply@brightloop.local>"),
+}).refine((e) => e.NODE_ENV !== "production" || !!e.SMTP_HOST, {
+  message: "SMTP_HOST is required in production",
+  path: ["SMTP_HOST"],
 });
 
 const parsed = schema.safeParse(process.env);
