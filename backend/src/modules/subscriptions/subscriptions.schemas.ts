@@ -1,13 +1,10 @@
 import { z } from "zod";
 import { dateOnly } from "../../lib/dates.js";
+import { moneyInput } from "../../lib/schemas.js";
 import { paginationQuery } from "../../lib/shared.js";
 
+export { moneyInput }; // payments reuse it
 const uuid = z.string().uuid();
-/** Money in requests: a decimal string or number with at most 2 places. Parsed to Decimal in the service. */
-export const moneyInput = z
-  .union([z.string().trim(), z.number()])
-  .transform((v) => String(v))
-  .refine((v) => /^\d{1,10}(\.\d{1,2})?$/.test(v), "Use a non-negative amount with at most 2 decimals");
 
 export const lineInputSchema = z.object({
   productId: uuid,

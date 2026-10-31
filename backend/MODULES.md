@@ -20,11 +20,11 @@ Reference implementation to copy: `src/modules/users/users.routes.ts` and `src/m
 | # | Package | Owns tables | Endpoints (under `/api/v1`) | Access | Depends on |
 |---|---|---|---|---|---|
 | 0 | **Foundation, Auth, Users** ✅ | User, RefreshToken, PasswordResetToken, AuditLog | `/auth/*`, `/users/*` | – | – |
-| 1 | **Catalog** | Tax, Product, ProductVariant, PaymentTerm | `/taxes`, `/products` (+ `/:id/variants`), `/payment-terms` | Admin write; Staff read | – |
-| 2 | **Plans & quotation templates** | Plan, QuotationTemplate(+Line) | `/plans`, `/quotation-templates` | Admin write; Staff read | 1 (reads Product) |
+| 1 | **Catalog** ✅ | Tax, Product, ProductVariant, PaymentTerm | `/taxes`, `/products` (+ `/:id/variants`), `/payment-terms` | Admin write; Staff read | – |
+| 2 | **Plans & quotation templates** ✅ | Plan, QuotationTemplate(+Line) | `/plans`, `/quotation-templates` | Admin write; Staff read | 1 (reads Product) |
 | 3 | **Customers** ✅ | Customer | `/customers` (staff CRUD, search); `/me/profile` (customer edits own) | Staff/Admin; Customer = self | – |
 | 4 | **Subscriptions** ✅ | Subscription, SubscriptionLine, SubscriptionStatusHistory | `/subscriptions` CRUD, lines, `POST /:id/transition` (confirm/activate/pause/resume/close/renew), create-from-template; customer portal `GET` of own | Staff/Admin write; Customer read-own | 1, 2, 3 (code against the schema; use seed data) |
-| 5 | **Discounts** | Discount, DiscountProduct, SubscriptionDiscount | `/discounts` CRUD (admin only), attach to products / subscriptions | Admin | 1 |
+| 5 | **Discounts** ✅ | Discount, DiscountProduct, SubscriptionDiscount | `/discounts` CRUD, attach to products / subscriptions, usage report | Admin write; Staff read | 1 |
 | 6 | **Billing engine & invoices** ✅ | BillingRun, Invoice, InvoiceLine, DiscountRedemption | `POST /billing/run`, `/invoices` list/get, `confirm` / `cancel` / `send` / `print` (PDF/HTML), customer portal read-own | Staff/Admin; Customer read-own | 4, 5 (calls their services) |
 | 7 | **Payments** ✅ | Payment | `POST /invoices/:id/payments` (idempotency key), `GET /payments`, `GET /invoices/:id/payments` | Staff/Admin record; Customer read-own | 6 |
 | 8 | **Reporting** ✅ | – (read-only SQL over everything) | `/reports/summary`, `/reports/revenue`, `/reports/overdue`, `/reports/subscriptions` (filters, paging) | Admin/Staff | 4, 6, 7 |
@@ -179,3 +179,41 @@ Notes for whoever extends it:
 - The **record payment** dialog creates one `Idempotency-Key` per opening, so pressing Record twice (or retrying after a timeout) can only ever create one payment.
 - **Print** fetches the escaped HTML with the bearer token (`fetchText` in `lib/api.ts`) and writes it into a new tab: the tab is opened inside the click because browsers block pop-ups opened after an `await`.
 - Money maths is never done in the browser for invoices: it only displays what the API computed (the subscription line editor has a preview, invoices don't).
+
+## Implemented: Packages 1, 2 and 5 (catalog, plans & templates, discounts)
+
+Reviewed and hardened after the first delivery. Tests: `src/test/masterdata.int.test.ts` (34 HTTP tests incl. an end-to-end "create a discount via the API → billing applies it → report → cancel releases it"), `src/lib/schemas.test.ts`, `discounts/derive.test.ts`.
+
+### Endpoints (all under `/api/v1`; **staff read, admin write**)
+| Resource | Endpoints |
+|---|---|
+| Taxes | `GET/POST /taxes`, `GET/PATCH/DELETE /taxes/:id` |
+| Products | `GET/POST /products`, `GET/PATCH/DELETE /products/:id`, variants: `GET/POST /products/:id/variants`, `PATCH/DELETE /products/:id/variants/:variantId` |
+| Payment terms | `GET/POST /payment-terms`, `GET/PATCH/DELETE /payment-terms/:id` (one default at a time) |
+| Plans | `GET/POST /plans`, `GET/PATCH/DELETE /plans/:id` |
+| Quotation templates | `GET/POST /quotation-templates`, `GET/PATCH/DELETE /quotation-templates/:id` (`lines` on PATCH replaces them all) |
+| Discounts | `GET/POST /discounts` (`?status=active\|scheduled\|expired\|exhausted\|inactive`), `GET/PATCH/DELETE /discounts/:id`, `POST /discounts/:id/products`, `DELETE /discounts/:id/products/:productId`, `POST /discounts/:id/subscriptions`, `DELETE /discounts/:id/subscriptions/:subscriptionId`, `GET /discounts/for-subscription/:subscriptionId`, `GET /discounts/:id/redemptions` |
+
+### Rules worth knowing
+- Money is always a 2-decimal **string** in responses (`"1000.00"`); requests accept string or number, max 10 integer digits, max 2 decimals. Percentages 0-100. Dates `YYYY-MM-DD`, validated as real calendar dates.
+- **Delete = soft delete, and refused while something live depends on it** (409 `IN_USE`, with counts in `details`): a tax used by products/subscription lines, a product used by live subscriptions/templates/discounts, a plan used by live subscriptions or templates, a payment term used by any subscription, a variant ever sold. The fix offered is *deactivate*: it stops new sales and keeps existing subscriptions billing.
+- **A plan's billing cycle (period / interval) is locked while ACTIVE or PAUSED subscriptions bill on it** (409 `PLAN_IN_USE`); everything else on a plan can change at any time.
+- Names are unique among live rows, case-insensitively (taxes, products, plans). A deactivated tax can't be assigned to a product (`TAX_UNAVAILABLE`).
+- Templates validate every line in one batch (live, active product; active variant that belongs to it) and report `usable` + `problems[]` (retired plan, deactivated product…) so a broken template is visible before someone tries to quote from it. Line order = array order.
+- Discount `status` is derived (never stored): inactive / scheduled / active / expired / exhausted. `usageLimit` can't be set below `usedCount` (`USAGE_BELOW_USED`); scope can't change under existing attachments (`SCOPE_CHANGE_BLOCKED`); an active product discount always keeps at least one product (`LAST_PRODUCT`).
+- **Discounts are *calculated and redeemed* only by the billing engine** (`billing/calc.ts`). This module never touches `usedCount`. (The first delivery contained a second, subtly different calculator and redeemer: removed so there is one source of truth.)
+
+### What the review found and fixed
+1. **None of the three modules were mounted**: every route 404'd. Now mounted explicitly in `app.ts`, each router authenticating itself (the old aggregator routers applied `authenticate` to everything beneath their mount point, which would have put a login wall in front of `/auth/login` if mounted at the root).
+2. **500s from the database** that should be clean 4xx: deleting an in-use payment term or variant (FK), amounts/percentages beyond `NUMERIC`/`CHECK` limits, `usageLimit` below `usedCount`, percentage over 100 after changing `type`, `null` silently coerced to `0` by `z.coerce`. Strict shared schemas in `lib/schemas.ts`; a global backstop maps Prisma `P2003` → 409 and `P2000/P2020` → 400.
+3. **Duplicate, divergent pricing code** in discounts (no stacking cap, no rounding, different minimum-purchase rule). Removed.
+4. **Template line order bug**: `sortOrder` defaulted to 0 in the schema so every line got 0 and order was undefined. Order now comes from the array.
+5. **Money serialised as raw Decimals** (`"1000"`), inconsistent with the rest of the API. DTOs now format it.
+6. **N+1 / chatty reads**: template validation did 2 queries per line; list/detail reads did one query per relation. Now batched and loaded with a single JOINed query (`relationLoadStrategy: "join"`): ~1 round trip instead of 3-5, which matters on a remote database.
+7. **Silent business breakage**: changing a live plan's billing cycle, deleting things in use, templates pointing at retired plans/products (see rules above).
+8. **Tax name uniqueness** blocked re-use after a soft delete and was case-sensitive: migration `20260104000000_tax_name_live_unique`.
+9. Stable pagination (id tie-break), empty PATCH bodies rejected, audit metadata trimmed to what changed, `GET`s open to staff (discounts were admin-only for reads), staff can see which discounts apply to a subscription.
+
+### Decisions you may want to revisit
+- Staff can read discounts but **only admins attach them to subscriptions** (the brief says only the admin creates discount rules; applying them is stricter than required). Loosen `POST/DELETE /discounts/:id/subscriptions` to `requireStaff` if sales reps should do it.
+- Deactivating a tax keeps charging it on products/lines that already use it (it only stops being *offered*). Move products to a new tax first if the old one should stop applying.

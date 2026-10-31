@@ -1,76 +1,90 @@
 import { z } from "zod";
+import { dateOnly } from "../../lib/dates.js";
+import { ANY_FIELD_MESSAGE, boundedInt, hasAnyField, moneyInput, queryBool, uuid } from "../../lib/schemas.js";
 import { paginationQuery } from "../../lib/shared.js";
 
-/** Regex to validate numeric/decimal strings with up to 2 decimal places */
-export const decimalString = z.string().regex(/^\d+(\.\d{1,2})?$/, "Must be a valid decimal string (e.g. '99.00')");
+const period = z.enum(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]);
+const name = z.string().trim().min(1).max(120);
+const dateRange = (v: { availableFrom?: Date; availableUntil?: Date | null }) => !v.availableFrom || !v.availableUntil || v.availableUntil >= v.availableFrom;
+const RANGE_ERROR = { message: "availableUntil cannot be before availableFrom", path: ["availableUntil"] };
 
-// ==================== PLAN SCHEMAS ====================
+// ==================== PLANS ====================
 
-export const createPlanSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  price: decimalString,
-  billingPeriod: z.enum(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]),
-  billingInterval: z.coerce.number().int().min(1).default(1),
-  minQuantity: z.coerce.number().int().min(1).default(1),
-  availableFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)"),
-  availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)").nullable().optional(),
-  autoCloseOnEnd: z.boolean().optional().default(false),
-  allowEarlyClose: z.boolean().optional().default(false),
-  allowPause: z.boolean().optional().default(false),
-  allowRenewal: z.boolean().optional().default(true),
-  isActive: z.boolean().optional().default(true),
-});
+export const createPlanSchema = z
+  .object({
+    name,
+    price: moneyInput,
+    billingPeriod: period,
+    /** Bill every N periods: 1 = every month, 3 = quarterly (MONTHLY). */
+    billingInterval: boundedInt(1, 365).default(1),
+    minQuantity: boundedInt(1, 1_000_000).default(1),
+    availableFrom: dateOnly,
+    availableUntil: dateOnly.nullable().optional(),
+    autoCloseOnEnd: z.boolean().default(false),
+    allowEarlyClose: z.boolean().default(false),
+    allowPause: z.boolean().default(false),
+    allowRenewal: z.boolean().default(true),
+    isActive: z.boolean().default(true),
+  })
+  .refine(dateRange, RANGE_ERROR);
 
-export const updatePlanSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
-  price: decimalString.optional(),
-  billingPeriod: z.enum(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]).optional(),
-  billingInterval: z.coerce.number().int().min(1).optional(),
-  minQuantity: z.coerce.number().int().min(1).optional(),
-  availableFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)").optional(),
-  availableUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)").nullable().optional(),
-  autoCloseOnEnd: z.boolean().optional(),
-  allowEarlyClose: z.boolean().optional(),
-  allowPause: z.boolean().optional(),
-  allowRenewal: z.boolean().optional(),
-  isActive: z.boolean().optional(),
-});
+export const updatePlanSchema = z
+  .object({
+    name,
+    price: moneyInput,
+    billingPeriod: period,
+    billingInterval: boundedInt(1, 365),
+    minQuantity: boundedInt(1, 1_000_000),
+    availableFrom: dateOnly,
+    availableUntil: dateOnly.nullable(),
+    autoCloseOnEnd: z.boolean(),
+    allowEarlyClose: z.boolean(),
+    allowPause: z.boolean(),
+    allowRenewal: z.boolean(),
+    isActive: z.boolean(),
+  })
+  .partial()
+  .refine(hasAnyField, ANY_FIELD_MESSAGE)
+  .refine(dateRange, RANGE_ERROR);
 
-export const listPlansQuery = paginationQuery.extend({
-  search: z.string().trim().max(100).optional(),
-  billingPeriod: z.enum(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]).optional(),
-  isActive: z.preprocess((val) => (val === "true" ? true : val === "false" ? false : val), z.boolean().optional()),
-});
+export const listPlansQuery = paginationQuery.extend({ search: z.string().trim().max(100).optional(), billingPeriod: period.optional(), isActive: queryBool });
 
-// ==================== QUOTATION TEMPLATE SCHEMAS ====================
+// ==================== QUOTATION TEMPLATES ====================
 
-export const quotationTemplateLineInput = z.object({
-  productId: z.string().uuid(),
-  variantId: z.string().uuid().nullable().optional(),
-  quantity: z.coerce.number().int().min(1).default(1),
-  sortOrder: z.coerce.number().int().min(0).default(0),
+/** Line order is the order of the array: there is no separate sortOrder to get wrong. */
+export const quotationTemplateLine = z.object({
+  productId: uuid,
+  variantId: uuid.nullable().optional(),
+  quantity: boundedInt(1, 1_000_000).default(1),
 });
 
 export const createQuotationTemplateSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  planId: z.string().uuid(),
-  validityDays: z.coerce.number().int().min(1).max(365).default(30),
+  name,
+  planId: uuid,
+  /** How long a quotation built from this template stays acceptable. */
+  validityDays: boundedInt(1, 365).default(30),
   notes: z.string().trim().max(1000).nullable().optional(),
-  isActive: z.boolean().optional().default(true),
-  lines: z.array(quotationTemplateLineInput).optional().default([]),
+  isActive: z.boolean().default(true),
+  lines: z.array(quotationTemplateLine).max(100).default([]),
 });
 
-export const updateQuotationTemplateSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
-  planId: z.string().uuid().optional(),
-  validityDays: z.coerce.number().int().min(1).max(365).optional(),
-  notes: z.string().trim().max(1000).nullable().optional(),
-  isActive: z.boolean().optional(),
-  lines: z.array(quotationTemplateLineInput).optional(),
-});
+export const updateQuotationTemplateSchema = z
+  .object({
+    name,
+    planId: uuid,
+    validityDays: boundedInt(1, 365),
+    notes: z.string().trim().max(1000).nullable(),
+    isActive: z.boolean(),
+    /** Replaces ALL lines when present. */
+    lines: z.array(quotationTemplateLine).max(100),
+  })
+  .partial()
+  .refine(hasAnyField, ANY_FIELD_MESSAGE);
 
-export const listQuotationTemplatesQuery = paginationQuery.extend({
-  search: z.string().trim().max(100).optional(),
-  planId: z.string().uuid().optional(),
-  isActive: z.preprocess((val) => (val === "true" ? true : val === "false" ? false : val), z.boolean().optional()),
-});
+export const listQuotationTemplatesQuery = paginationQuery.extend({ search: z.string().trim().max(100).optional(), planId: uuid.optional(), isActive: queryBool });
+
+export type CreatePlanInput = z.output<typeof createPlanSchema>;
+export type UpdatePlanInput = z.output<typeof updatePlanSchema>;
+export type QuotationLineInput = z.output<typeof quotationTemplateLine>;
+export type CreateQuotationTemplateInput = z.output<typeof createQuotationTemplateSchema>;
+export type UpdateQuotationTemplateInput = z.output<typeof updateQuotationTemplateSchema>;

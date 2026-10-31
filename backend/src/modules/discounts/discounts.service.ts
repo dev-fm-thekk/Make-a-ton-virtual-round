@@ -1,422 +1,250 @@
 /**
- * Discounts Service
+ * Discount rules: admin-managed CRUD, product / subscription attachment, and usage reporting.
  *
- * Implements Module 5 (Discounts):
- * - Admin-only CRUD for discounts (fixed or percentage, min purchase/quantity, usage limits, date range).
- * - Attaching discounts to products (DiscountProduct) and to subscriptions (SubscriptionDiscount).
- * - Guarded atomic usage increment for redemption:
- *     UPDATE discounts SET "usedCount" = "usedCount" + 1
- *     WHERE id = $1 AND ("usageLimit" IS NULL OR "usedCount" < "usageLimit")
- * - Pure function exported for Package 6 (Billing engine):
- *     findApplicableDiscounts(lines, subscription, asOf)
+ * What this module does NOT do: calculate or redeem discounts. Applying them to an invoice (ordering, stacking, rounding,
+ * the guarded usage counter) is the billing engine's job (modules/billing/calc.ts + engine.ts), so there is exactly ONE
+ * implementation of the money maths. This module only maintains the rules the engine reads, and must never touch `usedCount`.
  */
 
-import { Prisma, type Discount, type DiscountType, type DiscountScope } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { toDateOnly, todayUtc } from "../../lib/dates.js";
+import { badRequest, conflict, domainError, notFound } from "../../lib/errors.js";
+import { money } from "../../lib/money.js";
 import { prisma } from "../../lib/prisma.js";
-import { notFound, badRequest, conflict } from "../../lib/errors.js";
 import { pageArgs, pageResult, type Pagination, type Tx } from "../../lib/shared.js";
+import { discountStatus, remainingUses } from "./derive.js";
+import type { CreateDiscountInput, ListDiscountsQuery, UpdateDiscountInput } from "./discounts.schemas.js";
 
-// ==================== INTERFACES ====================
+const stable = [{ createdAt: "desc" as const }, { id: "asc" as const }];
+const isUnique = (err: unknown) => (err as { code?: string }).code === "P2002";
 
-export interface CreateDiscountInput {
-  name: string;
-  type: DiscountType;
-  value: string;
-  scope: DiscountScope;
-  minPurchaseAmount?: string | null;
-  minQuantity?: number | null;
-  startDate: string;
-  endDate?: string | null;
-  usageLimit?: number | null;
-  isActive?: boolean;
-  productIds?: string[];
+const include = {
+  products: { select: { product: { select: { id: true, name: true } } } },
+  _count: { select: { subscriptions: true, redemptions: true } },
+} satisfies Prisma.DiscountInclude;
+type Row = Prisma.DiscountGetPayload<{ include: typeof include }>;
+
+export function discountDto(d: Row, today = todayUtc()) {
+  return {
+    id: d.id,
+    name: d.name,
+    type: d.type,
+    value: money(d.value),
+    scope: d.scope,
+    minPurchaseAmount: d.minPurchaseAmount === null ? null : money(d.minPurchaseAmount),
+    minQuantity: d.minQuantity,
+    startDate: toDateOnly(d.startDate),
+    endDate: d.endDate ? toDateOnly(d.endDate) : null,
+    usageLimit: d.usageLimit,
+    usedCount: d.usedCount,
+    remainingUses: remainingUses(d),
+    isActive: d.isActive,
+    /** Why it is / isn't being applied today. */
+    status: discountStatus(d, today),
+    products: d.products.map((p) => p.product),
+    attachedSubscriptions: d._count.subscriptions,
+    redemptions: d._count.redemptions,
+    createdAt: d.createdAt,
+    updatedAt: d.updatedAt,
+  };
 }
 
-export interface UpdateDiscountInput {
-  name?: string;
-  type?: DiscountType;
-  value?: string;
-  scope?: DiscountScope;
-  minPurchaseAmount?: string | null;
-  minQuantity?: number | null;
-  startDate?: string;
-  endDate?: string | null;
-  usageLimit?: number | null;
-  isActive?: boolean;
-  productIds?: string[];
+async function find(id: string, db: Tx = prisma) {
+  const d = await db.discount.findFirst({ where: { id, deletedAt: null }, include, relationLoadStrategy: "join" });
+  if (!d) throw notFound("Discount");
+  return d;
 }
 
-export interface BillableLineItem {
-  id?: string;
-  productId: string;
-  variantId?: string | null;
-  quantity: number;
-  unitPrice: Prisma.Decimal;
-  amount: Prisma.Decimal;
+/** Every product id must be a live product (one batched query). */
+async function assertProducts(db: Tx, ids: string[]) {
+  if (ids.length === 0) return;
+  const found = await db.product.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true } });
+  const ok = new Set(found.map((p) => p.id));
+  const missing = ids.filter((id) => !ok.has(id));
+  if (missing.length) throw notFound(`Product ${missing[0]}`);
 }
 
-export interface BillableSubscription {
-  id: string;
-  customerId: string;
-  discounts?: {
-    discountId: string;
-    discount?: Discount;
-  }[];
-}
-
-export interface ApplicableDiscountResult {
-  discount: Discount;
-  discountAmount: Prisma.Decimal;
-  lineId?: string;
-  productId?: string;
-  scope: DiscountScope;
-}
-
-const discountInclude = {
-  products: {
-    include: {
-      product: true,
-    },
-  },
-  _count: {
-    select: {
-      subscriptions: true,
-      redemptions: true,
-    },
-  },
-} as const;
-
-// ==================== DISCOUNT CRUD ====================
+// ==================== CRUD ====================
 
 export async function createDiscount(input: CreateDiscountInput) {
-  const start = new Date(input.startDate);
-  const end = input.endDate ? new Date(input.endDate) : null;
-  if (end && end < start) {
-    throw badRequest("endDate cannot be before startDate");
-  }
-
-  const valDecimal = new Prisma.Decimal(input.value);
-  if (input.type === "PERCENTAGE" && (valDecimal.lessThan(0) || valDecimal.greaterThan(100))) {
-    throw badRequest("Percentage discount value must be between 0 and 100");
-  }
-
-  return prisma.$transaction(async (tx) => {
-    // If productIds are supplied for PRODUCT-scoped discount, verify they exist
-    if (input.productIds && input.productIds.length > 0) {
-      if (input.scope !== "PRODUCT") {
-        throw badRequest("productIds can only be specified for PRODUCT-scoped discounts");
-      }
-      for (const pid of input.productIds) {
-        const prod = await tx.product.findFirst({ where: { id: pid, deletedAt: null } });
-        if (!prod) throw notFound(`Product ${pid}`);
-      }
-    }
-
-    const discount = await tx.discount.create({
-      data: {
-        name: input.name,
-        type: input.type,
-        value: valDecimal,
-        scope: input.scope,
-        minPurchaseAmount: input.minPurchaseAmount ? new Prisma.Decimal(input.minPurchaseAmount) : null,
-        minQuantity: input.minQuantity ?? null,
-        startDate: start,
-        endDate: end,
-        usageLimit: input.usageLimit ?? null,
-        isActive: input.isActive ?? true,
-        ...(input.productIds && input.productIds.length > 0 && {
-          products: {
-            create: input.productIds.map((pid) => ({ productId: pid })),
-          },
-        }),
-      },
-      include: discountInclude,
-    });
-
-    return discount;
+  const { productIds, ...rest } = input;
+  const id = await prisma.$transaction(async (tx) => {
+    await assertProducts(tx, productIds);
+    const d = await tx.discount.create({ data: { ...rest, products: { create: productIds.map((productId) => ({ productId })) } }, select: { id: true } });
+    return d.id;
   });
+  return discountDto(await find(id));
 }
 
 export async function getDiscountById(id: string) {
-  const discount = await prisma.discount.findFirst({
-    where: { id, deletedAt: null },
-    include: discountInclude,
-  });
-  if (!discount) throw notFound("Discount");
-  return discount;
+  return discountDto(await find(id));
 }
 
-export async function listDiscounts(
-  params: Pagination & {
-    search?: string;
-    scope?: DiscountScope;
-    type?: DiscountType;
-    isActive?: boolean;
-  },
-) {
+/** "What is happening to it today" as a database filter (so pagination stays correct). */
+function statusWhere(status: NonNullable<ListDiscountsQuery["status"]>, today: Date): Prisma.DiscountWhereInput {
+  const started = { startDate: { lte: today } };
+  const notEnded = { OR: [{ endDate: null }, { endDate: { gte: today } }] };
+  switch (status) {
+    case "inactive":
+      return { isActive: false };
+    case "scheduled":
+      return { isActive: true, startDate: { gt: today } };
+    case "expired":
+      return { isActive: true, endDate: { lt: today } };
+    case "exhausted":
+      return { isActive: true, ...started, AND: [notEnded, { usageLimit: { not: null } }, { usedCount: { gte: prisma.discount.fields.usageLimit } }] };
+    case "active":
+      return { isActive: true, ...started, AND: [notEnded, { OR: [{ usageLimit: null }, { usedCount: { lt: prisma.discount.fields.usageLimit } }] }] };
+  }
+}
+
+export async function listDiscounts(params: Pagination & Omit<ListDiscountsQuery, "page" | "limit">) {
+  const today = todayUtc();
   const where: Prisma.DiscountWhereInput = {
     deletedAt: null,
     ...(params.isActive !== undefined && { isActive: params.isActive }),
     ...(params.scope && { scope: params.scope }),
     ...(params.type && { type: params.type }),
-    ...(params.search && {
-      name: { contains: params.search, mode: "insensitive" },
-    }),
+    ...(params.search && { name: { contains: params.search, mode: "insensitive" } }),
+    ...(params.status && statusWhere(params.status, today)),
   };
-
-  const [items, total] = await Promise.all([
-    prisma.discount.findMany({
-      where,
-      include: discountInclude,
-      orderBy: { createdAt: "desc" },
-      ...pageArgs(params),
-    }),
-    prisma.discount.count({ where }),
-  ]);
-
-  return pageResult(items, total, params);
+  const [items, total] = await Promise.all([prisma.discount.findMany({ where, include, relationLoadStrategy: "join", orderBy: stable, ...pageArgs(params) }), prisma.discount.count({ where })]);
+  return pageResult(items.map((d) => discountDto(d, today)), total, params);
 }
 
 export async function updateDiscount(id: string, input: UpdateDiscountInput) {
-  const existing = await getDiscountById(id);
+  const { productIds, ...fields } = input;
 
-  const start = input.startDate ? new Date(input.startDate) : existing.startDate;
-  const end = input.endDate !== undefined ? (input.endDate ? new Date(input.endDate) : null) : existing.endDate;
-  if (end && end < start) {
-    throw badRequest("endDate cannot be before startDate");
-  }
+  await prisma.$transaction(async (tx) => {
+    // Lock the row: a billing worker redeeming this discount right now would otherwise race our `usedCount` check.
+    await tx.$queryRaw`SELECT "id" FROM "discounts" WHERE "id" = ${id}::uuid FOR UPDATE`;
+    const existing = await find(id, tx);
 
-  const effectiveType = input.type ?? existing.type;
-  if (input.value !== undefined) {
-    const valDecimal = new Prisma.Decimal(input.value);
-    if (effectiveType === "PERCENTAGE" && (valDecimal.lessThan(0) || valDecimal.greaterThan(100))) {
-      throw badRequest("Percentage discount value must be between 0 and 100");
+    // Validate the row as it WILL look, not just the fields that were sent.
+    const type = fields.type ?? existing.type;
+    const scope = fields.scope ?? existing.scope;
+    const value = fields.value ?? existing.value.toString();
+    const start = fields.startDate ?? existing.startDate;
+    const end = fields.endDate === undefined ? existing.endDate : fields.endDate;
+    const limit = fields.usageLimit === undefined ? existing.usageLimit : fields.usageLimit;
+    const active = fields.isActive ?? existing.isActive;
+
+    if (type === "PERCENTAGE" && Number(value) > 100) throw badRequest("A percentage can't be more than 100", { field: "value" });
+    if (end && end < start) throw badRequest("endDate cannot be before startDate", { field: "endDate" });
+    if (limit !== null && limit < existing.usedCount) {
+      throw domainError("USAGE_BELOW_USED", `It has already been used ${existing.usedCount} time(s), so the limit can't be lower than that.`, { usedCount: existing.usedCount });
     }
-  }
 
-  return prisma.$transaction(async (tx) => {
-    if (input.productIds !== undefined) {
-      const scope = input.scope ?? existing.scope;
-      if (scope !== "PRODUCT" && input.productIds.length > 0) {
-        throw badRequest("productIds can only be specified for PRODUCT-scoped discounts");
-      }
-      for (const pid of input.productIds) {
-        const prod = await tx.product.findFirst({ where: { id: pid, deletedAt: null } });
-        if (!prod) throw notFound(`Product ${pid}`);
-      }
+    // Changing scope would orphan whatever is attached for the old scope.
+    if (scope !== existing.scope) {
+      if (existing.scope === "PRODUCT" && productIds === undefined && existing.products.length)
+        throw domainError("SCOPE_CHANGE_BLOCKED", "Remove the discount's products before switching it to a subscription discount (send productIds: []).");
+      if (existing.scope === "SUBSCRIPTION" && existing._count.subscriptions)
+        throw domainError("SCOPE_CHANGE_BLOCKED", `Detach it from its ${existing._count.subscriptions} subscription(s) before making it a product discount.`, { subscriptions: existing._count.subscriptions });
+    }
+
+    let productCount = existing.products.length;
+    if (productIds !== undefined) {
+      if (scope === "SUBSCRIPTION" && productIds.length) throw badRequest("productIds only apply to PRODUCT-scoped discounts");
+      await assertProducts(tx, productIds);
       await tx.discountProduct.deleteMany({ where: { discountId: id } });
-      if (input.productIds.length > 0) {
-        await tx.discountProduct.createMany({
-          data: input.productIds.map((pid) => ({ discountId: id, productId: pid })),
-        });
-      }
+      if (productIds.length) await tx.discountProduct.createMany({ data: productIds.map((productId) => ({ discountId: id, productId })) });
+      productCount = productIds.length;
+    } else if (scope !== existing.scope && scope === "SUBSCRIPTION") {
+      productCount = 0;
     }
+    if (scope === "PRODUCT" && active && productCount === 0) throw badRequest("An active product discount needs at least one product");
 
-    return tx.discount.update({
-      where: { id },
-      data: {
-        ...(input.name !== undefined && { name: input.name }),
-        ...(input.type !== undefined && { type: input.type }),
-        ...(input.value !== undefined && { value: new Prisma.Decimal(input.value) }),
-        ...(input.scope !== undefined && { scope: input.scope }),
-        ...(input.minPurchaseAmount !== undefined && {
-          minPurchaseAmount: input.minPurchaseAmount ? new Prisma.Decimal(input.minPurchaseAmount) : null,
-        }),
-        ...(input.minQuantity !== undefined && { minQuantity: input.minQuantity }),
-        ...(input.startDate !== undefined && { startDate: start }),
-        ...(input.endDate !== undefined && { endDate: end }),
-        ...(input.usageLimit !== undefined && { usageLimit: input.usageLimit }),
-        ...(input.isActive !== undefined && { isActive: input.isActive }),
-      },
-      include: discountInclude,
-    });
+    await tx.discount.update({ where: { id }, data: fields });
   });
+  return discountDto(await find(id));
 }
 
+/** Soft delete. The billing engine ignores deleted discounts, so attached ones simply stop applying. */
 export async function softDeleteDiscount(id: string) {
-  await getDiscountById(id);
-  return prisma.discount.update({
-    where: { id },
-    data: { deletedAt: new Date() },
-  });
+  const res = await prisma.discount.updateMany({ where: { id, deletedAt: null }, data: { deletedAt: new Date(), isActive: false } });
+  if (res.count === 0) throw notFound("Discount");
 }
 
-// ==================== ATTACHMENTS ====================
+// ==================== PRODUCT ATTACHMENT ====================
 
 export async function attachProductsToDiscount(discountId: string, productIds: string[]) {
-  const discount = await getDiscountById(discountId);
-  if (discount.scope !== "PRODUCT") {
-    throw badRequest("Can only attach products to PRODUCT-scoped discounts");
-  }
-
-  return prisma.$transaction(async (tx) => {
-    for (const pid of productIds) {
-      const prod = await tx.product.findFirst({ where: { id: pid, deletedAt: null } });
-      if (!prod) throw notFound(`Product ${pid}`);
-      await tx.discountProduct.upsert({
-        where: { discountId_productId: { discountId, productId: pid } },
-        create: { discountId, productId: pid },
-        update: {},
-      });
-    }
-
-    return tx.discount.findUnique({
-      where: { id: discountId },
-      include: discountInclude,
-    });
+  await prisma.$transaction(async (tx) => {
+    const d = await find(discountId, tx);
+    if (d.scope !== "PRODUCT") throw badRequest("Products can only be attached to PRODUCT-scoped discounts");
+    await assertProducts(tx, productIds);
+    await tx.discountProduct.createMany({ data: productIds.map((productId) => ({ discountId, productId })), skipDuplicates: true });
   });
+  return discountDto(await find(discountId));
 }
 
 export async function detachProductFromDiscount(discountId: string, productId: string) {
-  await getDiscountById(discountId);
-  return prisma.discountProduct.deleteMany({
-    where: { discountId, productId },
+  await prisma.$transaction(async (tx) => {
+    const d = await find(discountId, tx);
+    const has = d.products.some((p) => p.product.id === productId);
+    if (has && d.isActive && d.products.length === 1) {
+      throw domainError("LAST_PRODUCT", "That is the discount's only product. Deactivate the discount first, or attach another product.");
+    }
+    await tx.discountProduct.deleteMany({ where: { discountId, productId } });
   });
 }
 
+// ==================== SUBSCRIPTION ATTACHMENT ====================
+
 export async function attachDiscountToSubscription(discountId: string, subscriptionId: string) {
-  const discount = await getDiscountById(discountId);
-  if (discount.scope !== "SUBSCRIPTION") {
-    throw badRequest("Can only attach SUBSCRIPTION-scoped discounts to subscriptions");
-  }
-
-  const sub = await prisma.subscription.findUnique({ where: { id: subscriptionId } });
+  const d = await find(discountId);
+  if (d.scope !== "SUBSCRIPTION") throw badRequest("Only SUBSCRIPTION-scoped discounts can be attached to a subscription");
+  const sub = await prisma.subscription.findUnique({ where: { id: subscriptionId }, select: { status: true } });
   if (!sub) throw notFound("Subscription");
-
+  if (sub.status === "CLOSED") throw domainError("SUBSCRIPTION_CLOSED", "That subscription is closed");
   try {
-    return await prisma.subscriptionDiscount.create({
-      data: {
-        discountId,
-        subscriptionId,
-      },
-      include: {
-        discount: true,
-      },
-    });
+    await prisma.subscriptionDiscount.create({ data: { discountId, subscriptionId } });
   } catch (err) {
-    if ((err as { code?: string }).code === "P2002") {
-      throw conflict("Discount is already attached to this subscription");
-    }
+    if (isUnique(err)) throw conflict("That discount is already attached to this subscription");
     throw err;
   }
+  return discountDto(await find(discountId));
 }
 
 export async function detachDiscountFromSubscription(discountId: string, subscriptionId: string) {
-  return prisma.subscriptionDiscount.deleteMany({
-    where: { discountId, subscriptionId },
+  await prisma.subscriptionDiscount.deleteMany({ where: { discountId, subscriptionId } });
+}
+
+/** Discounts attached to one subscription (for its detail page). Deleted ones are hidden: they no longer apply. */
+export async function discountsForSubscription(subscriptionId: string) {
+  const rows = await prisma.subscriptionDiscount.findMany({
+    where: { subscriptionId, discount: { deletedAt: null } },
+    orderBy: { createdAt: "asc" },
+    include: { discount: { include } },
   });
+  return rows.map((r) => ({ attachedAt: r.createdAt, discount: discountDto(r.discount) }));
 }
 
-// ==================== GUARDED REDEMPTION (Hard Rule) ====================
+// ==================== USAGE REPORTING ====================
 
-/**
- * Atomically reserves a usage slot on a discount.
- * Rule: UPDATE discounts SET "usedCount" = "usedCount" + 1
- *       WHERE id = $1 AND ("usageLimit" IS NULL OR "usedCount" < "usageLimit")
- * Returns true if slot was claimed, false if usageLimit was reached.
- */
-export async function redeemDiscountGuarded(tx: Tx, discountId: string): Promise<boolean> {
-  const rows = await tx.$queryRaw<{ count: bigint }[]>`
-    WITH updated AS (
-      UPDATE "discounts"
-      SET "usedCount" = "usedCount" + 1, "updatedAt" = now()
-      WHERE "id" = ${discountId}::uuid
-        AND ("usageLimit" IS NULL OR "usedCount" < "usageLimit")
-        AND "isActive" = true
-        AND "deletedAt" IS NULL
-      RETURNING "id"
-    )
-    SELECT count(*)::bigint as count FROM updated;
-  `;
-
-  const count = Number(rows[0]?.count ?? 0);
-  return count > 0;
+/** Where a discount has actually been used: one row per invoice it reduced. */
+export async function listRedemptions(discountId: string, params: Pagination) {
+  await find(discountId);
+  const where = { discountId };
+  const [rows, total] = await Promise.all([
+    prisma.discountRedemption.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      select: {
+        id: true,
+        amount: true,
+        createdAt: true,
+        invoice: { select: { id: true, number: true, status: true, customer: { select: { id: true, name: true } } } },
+        subscription: { select: { id: true, number: true } },
+      },
+      ...pageArgs(params),
+    }),
+    prisma.discountRedemption.count({ where }),
+  ]);
+  return pageResult(
+    rows.map((r) => ({ id: r.id, amount: money(r.amount), at: r.createdAt, invoice: { id: r.invoice.id, number: r.invoice.number, status: r.invoice.status }, customer: r.invoice.customer, subscription: r.subscription })),
+    total,
+    params,
+  );
 }
 
-// ==================== CROSS-PACKAGE PURE FUNCTION (Hard Rule) ====================
-
-/**
- * Pure function to calculate applicable discounts for lines and subscription as of a date.
- * Package 6 calls this pure function during billing runs.
- */
-export function findApplicableDiscounts(
-  lines: BillableLineItem[],
-  subscription: BillableSubscription,
-  asOf: Date = new Date(),
-  availableDiscounts: (Discount & { products?: { productId: string }[] })[] = [],
-): ApplicableDiscountResult[] {
-  const results: ApplicableDiscountResult[] = [];
-  const dateOnly = new Date(asOf.toISOString().split("T")[0]!);
-
-  // Helper to check validity dates and usage limits
-  const isValid = (d: Discount) => {
-    if (!d.isActive || d.deletedAt) return false;
-    const start = new Date(d.startDate.toISOString().split("T")[0]!);
-    if (dateOnly < start) return false;
-    if (d.endDate) {
-      const end = new Date(d.endDate.toISOString().split("T")[0]!);
-      if (dateOnly > end) return false;
-    }
-    if (d.usageLimit !== null && d.usedCount >= d.usageLimit) return false;
-    return true;
-  };
-
-  // 1. PRODUCT-SCOPED DISCOUNTS
-  const productDiscounts = availableDiscounts.filter((d) => d.scope === "PRODUCT" && isValid(d));
-
-  for (const line of lines) {
-    for (const pd of productDiscounts) {
-      const appliesToProduct = pd.products?.some((p) => p.productId === line.productId);
-      if (!appliesToProduct) continue;
-
-      if (pd.minQuantity && line.quantity < pd.minQuantity) continue;
-      if (pd.minPurchaseAmount && line.amount.lessThan(pd.minPurchaseAmount)) continue;
-
-      let discountAmount: Prisma.Decimal;
-      if (pd.type === "FIXED") {
-        // Fixed amount discount cannot exceed the line total
-        discountAmount = Prisma.Decimal.min(pd.value, line.amount);
-      } else {
-        // Percentage discount
-        discountAmount = line.amount.mul(pd.value).div(100);
-      }
-
-      results.push({
-        discount: pd,
-        discountAmount,
-        lineId: line.id,
-        productId: line.productId,
-        scope: "PRODUCT",
-      });
-    }
-  }
-
-  // 2. SUBSCRIPTION-SCOPED DISCOUNTS (Attached to subscription)
-  if (subscription.discounts) {
-    const totalLinesAmount = lines.reduce((acc, l) => acc.add(l.amount), new Prisma.Decimal(0));
-    const totalLinesQuantity = lines.reduce((acc, l) => acc + l.quantity, 0);
-
-    for (const sd of subscription.discounts) {
-      const d = sd.discount ?? availableDiscounts.find((x) => x.id === sd.discountId);
-      if (!d || !isValid(d) || d.scope !== "SUBSCRIPTION") continue;
-
-      if (d.minQuantity && totalLinesQuantity < d.minQuantity) continue;
-      if (d.minPurchaseAmount && totalLinesAmount.lessThan(d.minPurchaseAmount)) continue;
-
-      let discountAmount: Prisma.Decimal;
-      if (d.type === "FIXED") {
-        discountAmount = Prisma.Decimal.min(d.value, totalLinesAmount);
-      } else {
-        discountAmount = totalLinesAmount.mul(d.value).div(100);
-      }
-
-      results.push({
-        discount: d,
-        discountAmount,
-        scope: "SUBSCRIPTION",
-      });
-    }
-  }
-
-  return results;
-}

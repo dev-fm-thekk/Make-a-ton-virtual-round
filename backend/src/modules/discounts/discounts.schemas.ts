@@ -1,52 +1,73 @@
 import { z } from "zod";
+import { dateOnly } from "../../lib/dates.js";
+import { ANY_FIELD_MESSAGE, boundedInt, hasAnyField, moneyInput, positiveMoneyInput, queryBool, uuid } from "../../lib/schemas.js";
 import { paginationQuery } from "../../lib/shared.js";
 
-/** Regex to validate numeric/decimal strings with up to 2 decimal places */
-export const decimalString = z.string().regex(/^\d+(\.\d{1,2})?$/, "Must be a valid decimal string (e.g. '10.00')");
+const type = z.enum(["FIXED", "PERCENTAGE"]);
+const scope = z.enum(["PRODUCT", "SUBSCRIPTION"]);
+const name = z.string().trim().min(1).max(120);
+const usageLimit = boundedInt(1, 1_000_000_000);
 
-// ==================== DISCOUNT SCHEMAS ====================
+// ==================== DISCOUNTS ====================
 
-export const createDiscountSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  type: z.enum(["FIXED", "PERCENTAGE"]),
-  value: decimalString,
-  scope: z.enum(["PRODUCT", "SUBSCRIPTION"]),
-  minPurchaseAmount: decimalString.nullable().optional(),
-  minQuantity: z.coerce.number().int().min(1).nullable().optional(),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)"),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)").nullable().optional(),
-  usageLimit: z.coerce.number().int().min(1).nullable().optional(),
-  isActive: z.boolean().optional().default(true),
-  productIds: z.array(z.string().uuid()).optional().default([]), // for PRODUCT-scoped discounts
-});
+export const createDiscountSchema = z
+  .object({
+    name,
+    type,
+    /** An amount (FIXED) or a percentage 0-100 (PERCENTAGE). Always > 0. */
+    value: positiveMoneyInput,
+    scope,
+    /** Only applies when the targeted lines add up to at least this (before this discount). */
+    minPurchaseAmount: moneyInput.nullable().optional(),
+    minQuantity: boundedInt(1, 1_000_000).nullable().optional(),
+    startDate: dateOnly,
+    endDate: dateOnly.nullable().optional(),
+    /** How many INVOICES may use it in total. null/omitted = unlimited. */
+    usageLimit: usageLimit.nullable().optional(),
+    isActive: z.boolean().default(true),
+    /** PRODUCT scope: the products it applies to. SUBSCRIPTION scope: leave empty (attach to subscriptions afterwards). */
+    productIds: z.array(uuid).max(500).default([]),
+  })
+  .superRefine((v, ctx) => {
+    if (v.type === "PERCENTAGE" && Number(v.value) > 100) ctx.addIssue({ code: "custom", path: ["value"], message: "A percentage can't be more than 100" });
+    if (v.endDate && v.endDate < v.startDate) ctx.addIssue({ code: "custom", path: ["endDate"], message: "endDate cannot be before startDate" });
+    if (v.scope === "SUBSCRIPTION" && v.productIds.length) ctx.addIssue({ code: "custom", path: ["productIds"], message: "productIds only apply to PRODUCT-scoped discounts" });
+    if (v.scope === "PRODUCT" && v.isActive && v.productIds.length === 0) ctx.addIssue({ code: "custom", path: ["productIds"], message: "An active product discount needs at least one product" });
+  });
 
-export const updateDiscountSchema = z.object({
-  name: z.string().trim().min(1).max(120).optional(),
-  type: z.enum(["FIXED", "PERCENTAGE"]).optional(),
-  value: decimalString.optional(),
-  scope: z.enum(["PRODUCT", "SUBSCRIPTION"]).optional(),
-  minPurchaseAmount: decimalString.nullable().optional(),
-  minQuantity: z.coerce.number().int().min(1).nullable().optional(),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)").optional(),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be ISO date string (YYYY-MM-DD)").nullable().optional(),
-  usageLimit: z.coerce.number().int().min(1).nullable().optional(),
-  isActive: z.boolean().optional(),
-  productIds: z.array(z.string().uuid()).optional(),
-});
+// Cross-field rules that depend on the stored row (type/value/dates/usage/products) are checked in the service.
+export const updateDiscountSchema = z
+  .object({
+    name,
+    type,
+    value: positiveMoneyInput,
+    scope,
+    minPurchaseAmount: moneyInput.nullable(),
+    minQuantity: boundedInt(1, 1_000_000).nullable(),
+    startDate: dateOnly,
+    endDate: dateOnly.nullable(),
+    usageLimit: usageLimit.nullable(),
+    isActive: z.boolean(),
+    /** Replaces the whole product list when present. */
+    productIds: z.array(uuid).max(500),
+  })
+  .partial()
+  .refine(hasAnyField, ANY_FIELD_MESSAGE);
 
 export const listDiscountsQuery = paginationQuery.extend({
   search: z.string().trim().max(100).optional(),
-  scope: z.enum(["PRODUCT", "SUBSCRIPTION"]).optional(),
-  type: z.enum(["FIXED", "PERCENTAGE"]).optional(),
-  isActive: z.preprocess((val) => (val === "true" ? true : val === "false" ? false : val), z.boolean().optional()),
+  scope: scope.optional(),
+  type: type.optional(),
+  isActive: queryBool,
+  /** Filter by what is happening to it today. */
+  status: z.enum(["inactive", "scheduled", "active", "expired", "exhausted"]).optional(),
 });
 
-// ==================== ATTACHMENT SCHEMAS ====================
+// ==================== ATTACHMENTS ====================
 
-export const attachDiscountProductsSchema = z.object({
-  productIds: z.array(z.string().uuid()).min(1),
-});
+export const attachDiscountProductsSchema = z.object({ productIds: z.array(uuid).min(1).max(500) });
+export const attachSubscriptionDiscountSchema = z.object({ subscriptionId: uuid });
 
-export const attachSubscriptionDiscountSchema = z.object({
-  subscriptionId: z.string().uuid(),
-});
+export type CreateDiscountInput = z.output<typeof createDiscountSchema>;
+export type UpdateDiscountInput = z.output<typeof updateDiscountSchema>;
+export type ListDiscountsQuery = z.output<typeof listDiscountsQuery>;

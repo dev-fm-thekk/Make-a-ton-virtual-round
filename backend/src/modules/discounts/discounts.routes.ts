@@ -1,131 +1,91 @@
 import { Router } from "express";
 import { z } from "zod";
 import { audit } from "../../lib/audit.js";
-import { idParam } from "../../lib/shared.js";
-import { authenticate, requireRole } from "../../middleware/auth.js";
+import { idParam, paginationQuery, type Pagination } from "../../lib/shared.js";
+import { authenticate, requireRole, requireStaff } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import {
-  createDiscountSchema,
-  updateDiscountSchema,
-  listDiscountsQuery,
   attachDiscountProductsSchema,
   attachSubscriptionDiscountSchema,
+  createDiscountSchema,
+  listDiscountsQuery,
+  updateDiscountSchema,
+  type ListDiscountsQuery,
 } from "./discounts.schemas.js";
 import * as svc from "./discounts.service.js";
 
+/**
+ * /discounts. The brief: only the admin creates discount rules, so every write is ADMIN-only. Staff may READ them
+ * (to see what a customer already gets and why an invoice is discounted).
+ */
 export const discountsRouter = Router();
+discountsRouter.use(authenticate);
 
-// Base auth requirement: all discount management is ADMIN-only
-discountsRouter.use(authenticate, requireRole("ADMIN"));
+const productParams = z.object({ id: z.string().uuid(), productId: z.string().uuid() });
+const subscriptionParams = z.object({ id: z.string().uuid(), subscriptionId: z.string().uuid() });
 
-// ==========================================
-// 1. DISCOUNT CRUD (/discounts)
-// Access: ADMIN
-// ==========================================
-
-discountsRouter.get("/", validate({ query: listDiscountsQuery }), async (req, res) => {
-  const query = req.query as unknown as z.infer<typeof listDiscountsQuery>;
-  const result = await svc.listDiscounts(query);
-  res.json(result);
+// ── reads (staff + admin). Declared before "/:id" so literal segments are never read as an id. ──
+discountsRouter.get("/", requireStaff, validate({ query: listDiscountsQuery }), async (req, res) => {
+  res.json(await svc.listDiscounts(req.query as unknown as ListDiscountsQuery));
 });
 
-discountsRouter.get("/:id", validate({ params: idParam }), async (req, res) => {
-  const discount = await svc.getDiscountById(req.params.id as string);
-  res.json({ discount });
+discountsRouter.get("/for-subscription/:subscriptionId", requireStaff, validate({ params: z.object({ subscriptionId: z.string().uuid() }) }), async (req, res) => {
+  res.json({ items: await svc.discountsForSubscription(req.params.subscriptionId as string) });
 });
 
-discountsRouter.post("/", validate({ body: createDiscountSchema }), async (req, res) => {
+discountsRouter.get("/:id", requireStaff, validate({ params: idParam }), async (req, res) => {
+  res.json({ discount: await svc.getDiscountById(req.params.id as string) });
+});
+
+discountsRouter.get("/:id/redemptions", requireStaff, validate({ params: idParam, query: paginationQuery }), async (req, res) => {
+  res.json(await svc.listRedemptions(req.params.id as string, req.query as unknown as Pagination));
+});
+
+// ── writes (admin) ──
+discountsRouter.post("/", requireRole("ADMIN"), validate({ body: createDiscountSchema }), async (req, res) => {
   const discount = await svc.createDiscount(req.body);
-  await audit(req, {
-    action: "discount.create",
-    entityType: "Discount",
-    entityId: discount.id,
-    metadata: { name: req.body.name, type: req.body.type, value: req.body.value, scope: req.body.scope },
-  });
+  await audit(req, { action: "discount.create", entityType: "Discount", entityId: discount.id, metadata: { name: discount.name, type: discount.type, value: discount.value, scope: discount.scope } });
   res.status(201).json({ discount });
 });
 
-discountsRouter.patch("/:id", validate({ params: idParam, body: updateDiscountSchema }), async (req, res) => {
+discountsRouter.patch("/:id", requireRole("ADMIN"), validate({ params: idParam, body: updateDiscountSchema }), async (req, res) => {
   const id = req.params.id as string;
   const discount = await svc.updateDiscount(id, req.body);
-  await audit(req, {
-    action: "discount.update",
-    entityType: "Discount",
-    entityId: id,
-    metadata: req.body,
-  });
+  await audit(req, { action: "discount.update", entityType: "Discount", entityId: id, metadata: req.body });
   res.json({ discount });
 });
 
-discountsRouter.delete("/:id", validate({ params: idParam }), async (req, res) => {
+discountsRouter.delete("/:id", requireRole("ADMIN"), validate({ params: idParam }), async (req, res) => {
   const id = req.params.id as string;
   await svc.softDeleteDiscount(id);
-  await audit(req, {
-    action: "discount.delete",
-    entityType: "Discount",
-    entityId: id,
-  });
+  await audit(req, { action: "discount.delete", entityType: "Discount", entityId: id });
   res.status(204).end();
 });
 
-// ==========================================
-// 2. ATTACH TO PRODUCTS (/discounts/:id/products)
-// Access: ADMIN
-// ==========================================
-
-const productParam = z.object({ id: z.string().uuid(), productId: z.string().uuid() });
-
-discountsRouter.post("/:id/products", validate({ params: idParam, body: attachDiscountProductsSchema }), async (req, res) => {
+discountsRouter.post("/:id/products", requireRole("ADMIN"), validate({ params: idParam, body: attachDiscountProductsSchema }), async (req, res) => {
   const id = req.params.id as string;
   const discount = await svc.attachProductsToDiscount(id, req.body.productIds);
-  await audit(req, {
-    action: "discount.attach_products",
-    entityType: "Discount",
-    entityId: id,
-    metadata: { productIds: req.body.productIds },
-  });
+  await audit(req, { action: "discount.attach_products", entityType: "Discount", entityId: id, metadata: { productIds: req.body.productIds } });
   res.json({ discount });
 });
 
-discountsRouter.delete("/:id/products/:productId", validate({ params: productParam }), async (req, res) => {
+discountsRouter.delete("/:id/products/:productId", requireRole("ADMIN"), validate({ params: productParams }), async (req, res) => {
   const { id, productId } = req.params as { id: string; productId: string };
   await svc.detachProductFromDiscount(id, productId);
-  await audit(req, {
-    action: "discount.detach_product",
-    entityType: "Discount",
-    entityId: id,
-    metadata: { productId },
-  });
+  await audit(req, { action: "discount.detach_product", entityType: "Discount", entityId: id, metadata: { productId } });
   res.status(204).end();
 });
 
-// ==========================================
-// 3. ATTACH TO SUBSCRIPTIONS (/discounts/:id/subscriptions)
-// Access: ADMIN
-// ==========================================
-
-const subParam = z.object({ id: z.string().uuid(), subscriptionId: z.string().uuid() });
-
-discountsRouter.post("/:id/subscriptions", validate({ params: idParam, body: attachSubscriptionDiscountSchema }), async (req, res) => {
+discountsRouter.post("/:id/subscriptions", requireRole("ADMIN"), validate({ params: idParam, body: attachSubscriptionDiscountSchema }), async (req, res) => {
   const id = req.params.id as string;
-  const subDiscount = await svc.attachDiscountToSubscription(id, req.body.subscriptionId);
-  await audit(req, {
-    action: "discount.attach_subscription",
-    entityType: "SubscriptionDiscount",
-    entityId: id,
-    metadata: { subscriptionId: req.body.subscriptionId },
-  });
-  res.status(201).json({ subscriptionDiscount: subDiscount });
+  const discount = await svc.attachDiscountToSubscription(id, req.body.subscriptionId);
+  await audit(req, { action: "discount.attach_subscription", entityType: "Discount", entityId: id, metadata: { subscriptionId: req.body.subscriptionId } });
+  res.status(201).json({ discount });
 });
 
-discountsRouter.delete("/:id/subscriptions/:subscriptionId", validate({ params: subParam }), async (req, res) => {
+discountsRouter.delete("/:id/subscriptions/:subscriptionId", requireRole("ADMIN"), validate({ params: subscriptionParams }), async (req, res) => {
   const { id, subscriptionId } = req.params as { id: string; subscriptionId: string };
   await svc.detachDiscountFromSubscription(id, subscriptionId);
-  await audit(req, {
-    action: "discount.detach_subscription",
-    entityType: "SubscriptionDiscount",
-    entityId: id,
-    metadata: { subscriptionId },
-  });
+  await audit(req, { action: "discount.detach_subscription", entityType: "Discount", entityId: id, metadata: { subscriptionId } });
   res.status(204).end();
 });

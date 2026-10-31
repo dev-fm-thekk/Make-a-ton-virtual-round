@@ -180,7 +180,8 @@ model Customer {
 
 model Tax {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name        String    @unique
+  /// Unique among live rows, case-insensitively (partial index in the *_tax_name_live_unique migration).
+  name        String
   /// Percentage, e.g. 18.00
   ratePercent Decimal   @db.Decimal(5, 2)
   isActive    Boolean   @default(true)

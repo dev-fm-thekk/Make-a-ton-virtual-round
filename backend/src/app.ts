@@ -9,10 +9,13 @@ import { logger } from "./lib/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { billingRouter } from "./modules/billing/billing.routes.js";
+import { paymentTermsRouter, productsRouter, taxesRouter } from "./modules/catalog/catalog.routes.js";
 import { customersRouter, meRouter } from "./modules/customers/customers.routes.js";
+import { discountsRouter } from "./modules/discounts/discounts.routes.js";
 import { healthRouter } from "./modules/health/health.routes.js";
 import { invoicesRouter } from "./modules/invoices/invoices.routes.js";
 import { paymentsRouter } from "./modules/payments/payments.routes.js";
+import { plansRouter, quotationTemplatesRouter } from "./modules/plans/plans.routes.js";
 import { reportsRouter } from "./modules/reports/reports.routes.js";
 import { subscriptionsRouter } from "./modules/subscriptions/subscriptions.routes.js";
 import { usersRouter } from "./modules/users/users.routes.js";
@@ -52,6 +55,13 @@ export function createApp() {
   v1.use("/billing", billingRouter);
   v1.use("/invoices", invoicesRouter);
   v1.use("/invoices", paymentsRouter); // POST|GET /invoices/:id/payments
+  // master data (staff read, admin write)
+  v1.use("/taxes", taxesRouter);
+  v1.use("/products", productsRouter);
+  v1.use("/payment-terms", paymentTermsRouter);
+  v1.use("/plans", plansRouter);
+  v1.use("/quotation-templates", quotationTemplatesRouter);
+  v1.use("/discounts", discountsRouter);
   v1.use("/reports", reportsRouter);
   app.use("/api/v1", v1);
 
